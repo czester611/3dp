@@ -23,6 +23,7 @@ import pl.u1companion.data.local.AppDatabase
 import pl.u1companion.data.local.LibraryFileEntity
 import pl.u1companion.data.local.LocalFileStatus
 import pl.u1companion.data.local.PrinterEntity
+import pl.u1companion.geometry.ThreeMfInspector
 import pl.u1companion.printer.PrinterRepository
 import pl.u1companion.printer.job.GcodeInspector
 import pl.u1companion.printer.job.GcodeMeta
@@ -83,7 +84,19 @@ class PrintSetupViewModel @Inject constructor(
                 return@launch
             }
             val kind = FileKind.valueOf(f.kind)
-            val meta = if (kind == FileKind.GCODE) withContext(Dispatchers.IO) { GcodeInspector.inspect(File(f.localPath!!)) } else null
+            // 3MF pocięty dla U1 (np. w Snapmaker Orca) zawiera Metadata/plate_N.gcode - można drukować bez slicingu.
+            val embedded: File? = if (kind == FileKind.THREE_MF) withContext(Dispatchers.IO) {
+                runCatching {
+                    val info = ThreeMfInspector.inspect(File(f.localPath!!))
+                    val entry = info.embeddedGcodes.firstOrNull()
+                    if (entry != null && info.looksLikeU1) {
+                        val out = File(ctx.filesDir, "sliced").apply { mkdirs() }
+                        ThreeMfInspector.extractGcode(File(f.localPath), entry, File(out, f.fileName.substringBeforeLast('.') + "_" + entry.substringAfterLast('/')))
+                    } else null
+                }.getOrNull()
+            } else null
+            val gcodeFile = embedded ?: if (kind == FileKind.GCODE) File(f.localPath!!) else null
+            val meta = gcodeFile?.let { withContext(Dispatchers.IO) { GcodeInspector.inspect(it) } }
             val warnings = buildList {
                 if (meta?.looksForeign == true) add("Plik pocięty dla \"${meta.printerModel}\", nie dla Snapmaker U1 — druk może się nie udać lub uszkodzić wydruk.")
                 if (meta?.isKlipperFlavor == false) add("G-code nie jest w wariancie Klipper.")
@@ -92,7 +105,8 @@ class PrintSetupViewModel @Inject constructor(
             _ui.update {
                 it.copy(
                     file = f, meta = meta, warnings = warnings,
-                    gcode = if (kind == FileKind.GCODE) File(f.localPath!!) else null,
+                    gcode = gcodeFile,
+                    message = embedded?.let { "Użyto G-code osadzonego w 3MF (profil U1): ${it.name}" },
                     config = defaultConfig(meta),
                     phase = PrintSetupUi.Phase.Configure,
                 )

@@ -57,7 +57,7 @@ class WebSourceViewModel @Inject constructor(
     private val _events = Channel<String>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    fun download(source: SourceId, url: String, userAgent: String, contentDisposition: String?, mime: String?) = viewModelScope.launch {
+    fun download(source: SourceId, url: String, userAgent: String, contentDisposition: String?, mime: String?, modelKey: String?) = viewModelScope.launch {
         val name = URLUtil.guessFileName(url, contentDisposition, mime)
         if (FileKind.fromFileName(name) == FileKind.OTHER) _events.send("Pobieram $name (nierozpoznany typ pliku)")
         runCatching {
@@ -70,7 +70,7 @@ class WebSourceViewModel @Inject constructor(
                     if (!r.isSuccessful) throw IOException("HTTP ${r.code}")
                     r.body!!.byteStream().use { input -> target.outputStream().use { input.copyTo(it) } }
                 }
-                downloads.registerLocal(target.name, target.absolutePath, target.length(), url)
+                downloads.registerLocal(target.name, target.absolutePath, target.length(), url, modelKey)
             }
         }.onSuccess { _events.send("Dodano do biblioteki: $name") }
             .onFailure { _events.send("Pobieranie nieudane: ${it.message}") }
@@ -80,7 +80,7 @@ class WebSourceViewModel @Inject constructor(
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WebSourceScreen(source: SourceId, url: String, onBack: () -> Unit, vm: WebSourceViewModel = hiltViewModel()) {
+fun WebSourceScreen(source: SourceId, url: String, onBack: () -> Unit, modelKey: String? = null, vm: WebSourceViewModel = hiltViewModel()) {
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { vm.events.collect { snackbar.showSnackbar(it) } }
     Scaffold(
@@ -101,7 +101,7 @@ fun WebSourceScreen(source: SourceId, url: String, onBack: () -> Unit, vm: WebSo
                         settings.domStorageEnabled = true
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         webViewClient = WebViewClient()
-                        setDownloadListener { dlUrl, ua, cd, mime, _ -> vm.download(source, dlUrl, ua, cd, mime) }
+                        setDownloadListener { dlUrl, ua, cd, mime, _ -> vm.download(source, dlUrl, ua, cd, mime, modelKey) }
                         loadUrl(url)
                     }
                 },

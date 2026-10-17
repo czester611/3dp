@@ -41,7 +41,22 @@ data class SourceCapabilities(
     val hasPaidContent: Boolean = false,
 )
 
-data class PageRequest(val cursor: String?, val size: Int)
+/**
+ * @param categoryId natywne ID kategorii serwisu (już rozwiązane z kategorii kanonicznej przez
+ *   CategoryRepository); null = bez filtra kategorii. Adapter bez [SourceCapabilities.serverCategoryFilter] je ignoruje.
+ */
+data class PageRequest(val cursor: String?, val size: Int, val categoryId: String? = null)
+
+/**
+ * Wynik mapowania sortowania aplikacji na sortowanie serwisu.
+ * [exact]=false -> UI pokazuje adnotację "sortowanie X zastąpione: [nativeLabel]".
+ */
+data class SortResolution(
+    val requested: SortOrder,
+    val nativeValue: String,
+    val nativeLabel: String,
+    val exact: Boolean,
+)
 
 data class SearchPage(
     val items: List<ModelSummary>,
@@ -88,7 +103,12 @@ interface ModelSource {
 
     suspend fun resolveDownload(modelId: String, file: ModelFile): DownloadTicket
 
+    /** Natywne kategorie serwisu (płaska lista z parentId). Pusta lista = serwis bez kategorii. */
     suspend fun categories(): List<Category> = emptyList()
+
+    /** Jak serwis zrealizuje żądane sortowanie (patrz [SortResolution]). */
+    fun resolveSort(sort: SortOrder, hasText: Boolean): SortResolution =
+        SortResolution(sort, sort.name.lowercase(), sort.label, exact = sort in capabilities.supportedSorts)
 
     /** URL do wyszukiwania w przeglądarce (fallback dla ASSISTED_WEBVIEW/LINK_OUT). */
     fun webSearchUrl(text: String): String

@@ -59,16 +59,18 @@ wydruku i wysłania go na drukarkę **Snapmaker U1** w sieci lokalnej.
 
 | Serwis | Dostęp | Klucz | Wyszukiwanie/pobieranie | Status | Decyzja |
 |---|---|---|---|---|---|
-| **Printables** | Nieudokumentowany GraphQL `https://api.printables.com/graphql/` (używany przez stronę), introspekcja wyłączona | brak | `searchPrints2(query, limit, offset, ordering)`; `ordering ∈ {best_match, latest, popular, rating, makes_count}`; `print(id)` (stls, gcodes, otherFiles, images, license, tags); mutacja `getDownloadLink(id, printId, fileType ∈ {stl,gcode,sla,other,pack}, source)` zwraca link do `files.printables.com` — działa anonimowo | [Z-API] 2026-10-17 | **Adapter MVP** (`PrintablesSource`), oznaczony „nieoficjalne API”. ToS — [NIEZWERYFIKOWANE] (strona ToS zwraca 403 dla automatów). Moderator forum Prusa (2022): API istnieje, ale nie jest publiczne. |
-| **Thingiverse** | Oficjalne REST `https://api.thingiverse.com`, Bearer App Token | tak (użytkownik tworzy własną aplikację) | `/search/{term}?type=things`, `/things/{id}`, `/things/{id}/files`, `/things/{id}/images`, `/files/{id}/download` | ścieżki potwierdzone tylko w kodzie klientów zewn. (Kiln); bez tokenu 403; dokumentacja dev zwraca 403 dla automatów | **Adapter MVP** (`ThingiverseSource`), wymaga tokenu w Ustawieniach; nazwy pól odpowiedzi [NIEZWERYFIKOWANE]. |
-| **MakerWorld** (Bambu Lab) | Brak publicznego API. Endpointy `/api/v1/...` istnieją, ale wyszukiwanie za Cloudflare challenge (403) | — | — | [Z-API] (403/404) | **WebView wspomagany** (`WebAssistedSource`): użytkownik przegląda stronę, aplikacja przechwytuje pobrany 3MF. 3MF z MakerWorld mają profile Bambu → **zawsze reslicing** z profilem U1. |
-| Thangs | Brak publicznego API (wyszukiwarka geometryczna Physna) | — | — | [ŹRÓDŁO] brak informacji o API | WebView (etap 3). |
-| MyMiniFactory | Oficjalne API v2 `https://www.myminifactory.com/api/v2` z `key`; przeglądanie bez logowania, **pobieranie wymaga zalogowania użytkownika (OAuth)**; scraping „w celu wyszukiwarki” — prośba o kontakt | tak | `/search`, `/objects/{id}`, `/objects/{id}/files` | [ŹRÓDŁO] wytyczne API (cytat z wyszukiwarki; strona 403), kod Kiln | Adapter w etapie 3 (klucz + OAuth); do tego czasu WebView. |
-| Cults3D | Oficjalne GraphQL `https://cults3d.com/graphql`, Basic Auth (login + klucz z `cults3d.com/en/api/keys`) | tak | `creationsSearchBatch`, `creation(identifier)` | [ŹRÓDŁO] kod Kiln; dokumentacja 403 | Adapter w etapie 3; dużo modeli płatnych → domyślnie filtr „darmowe”. |
+| **Printables** | Nieudokumentowany GraphQL `https://api.printables.com/graphql/` (używany przez stronę), introspekcja wyłączona | brak | `searchPrints2(query, limit, offset, ordering, categoryId)`; `ordering ∈ {best_match, latest, popular, rating, makes_count}`; `categories { id name level path { id } }` — 89 kategorii w 2 poziomach (14 głównych), `categoryId` kategorii głównej obejmuje podkategorie; `print(id)` (stls, gcodes, otherFiles, images, license, tags); mutacja `getDownloadLink(id, printId, fileType ∈ {stl,gcode,sla,other,pack}, source)` zwraca link do `files.printables.com` — działa anonimowo | [Z-API] 2026-10-17 | **Adapter MVP** (`PrintablesSource`), oznaczony „nieoficjalne API”. ToS — [NIEZWERYFIKOWANE] (strona ToS zwraca 403 dla automatów). Moderator forum Prusa (2022): API istnieje, ale nie jest publiczne. |
+| **Thingiverse** | Oficjalne REST `https://api.thingiverse.com`, Bearer App Token | tak (użytkownik tworzy własną aplikację) | `/search/{term}?type=things`, `/things/{id}`, `/things/{id}/files`, `/things/{id}/images`, `/files/{id}/download`, `/categories` (lista płaska, [NIEZWERYFIKOWANE]); filtr kategorii w `/search` nieznany | ścieżki potwierdzone tylko w kodzie klientów zewn. (Kiln); bez tokenu 403; dokumentacja dev zwraca 403 dla automatów | **Adapter MVP** (`ThingiverseSource`), wymaga tokenu w Ustawieniach; nazwy pól odpowiedzi [NIEZWERYFIKOWANE]. |
+| **MakerWorld** (Bambu Lab) | Brak publicznego API. Endpointy `/api/v1/...` istnieją, ale wyszukiwanie za Cloudflare challenge (403) | — | — | [Z-API] (403/404) | **WebView wspomagany** (`WebAssistedSource`): chip „↗ MakerWorld” obok źródeł otwiera wyszukiwanie z bieżącą frazą, aplikacja przechwytuje pobrany 3MF (analiza wymiarów i profilu). 3MF z MakerWorld mają profile Bambu → **reslicing** z profilem U1 (wykrywane z `project_settings.config`). |
+| Thangs | Brak publicznego API (wyszukiwarka geometryczna Physna) | — | — | [ŹRÓDŁO] brak informacji o API; strona 403 dla automatów | **WebView** (chip „↗ Thangs”); URL wyszukiwania `thangs.com/search/{q}?scope=all` [NIEZWERYFIKOWANE w przeglądarce]. |
+| **MyMiniFactory** | Oficjalne API v2 `https://www.myminifactory.com/api/v2`, klucz w parametrze `key` (lub OAuth2). Specyfikacja OpenAPI: github.com/MyMiniFactory/api-documentation | tak (klucz użytkownika) | `GET /search?q&page&per_page&sort=visits\|date\|popularity&order&cat&commercial_use&remix`, `/objects/{id}`, `/objects/{id}/files`, `/categories` (drzewo z `children`). **`download_url` tylko dla użytkownika OAuth — nie z kluczem**; obiekt ma pole `dimensions` (tekst) | [ŹRÓDŁO] oficjalna specyfikacja OpenAPI; nie testowano z prawdziwym kluczem; brak pola ceny (płatne = licencja `store`), zachowanie `q=""` nieznane | **Adapter** `MyMiniFactorySource`: wyszukiwanie/szczegóły/kategorie przez API, pobieranie przez stronę w WebView (użytkownik loguje się sam). |
+| **Cults3D** | Oficjalne GraphQL `https://cults3d.com/graphql`, Basic Auth `login:klucz` (klucz z `cults3d.com/en/api/keys`) | tak | `creationsSearchBatch(query, limit, offset)` (bez znanego sortowania/filtrów), `creationsBatch(sort: BY_LIKES\|BY_DOWNLOADS…, limit, offset, onlyFree)`, `creation(slug)`, `categories { id name(locale: EN) children }`; limity społeczności: ~60 zapytań/30 s, ~500/dzień; `blueprints.fileUrl`/`downloadUrl` wymagają sesji przeglądarki | [ŹRÓDŁO] społecznościowe cults3d-api-docs (gisty Cults + Discord), kod Kiln; oficjalna dokumentacja 403; nie testowano z kluczem. Do weryfikacji: sort „najnowsze” (`BY_PUBLICATION`?), argument kategorii, `description(locale:)` | **Adapter** `Cults3dSource`: wyszukiwanie/przeglądanie/szczegóły/kategorie przez API, pobieranie przez WebView. Dużo płatnych — domyślnie „darmowe”. |
 | Creality Cloud | Brak znanego publicznego API | — | — | [NIEZWERYFIKOWANE] | WebView. |
 | GrabCAD | Brak publicznego API (głównie CAD/STEP) | — | — | [NIEZWERYFIKOWANE] (403) | WebView. |
 | CGTrader | Oficjalne API (OAuth2), `api.cgtrader.com/docs`; głównie płatne modele | tak | GET /models, kategorie, licencje | [ŹRÓDŁO] konektor Microsoft, blog CGTrader | Niski priorytet. |
 | Yeggi | Agregator, brak API | — | — | — | Tylko link do wyszukiwania (LINK_OUT). |
+
+Uwaga techniczna: Printables (Cloudflare) odrzuca domyślny User-Agent OkHttp i Python-urllib (403), a akceptuje identyfikujący UA aplikacji `U1Companion/x.y (Android; private use)` ustawiany w `AppModule` — zależność krucha, do monitorowania.
 
 Wnioski:
 1. Jedyny serwis z działającym od ręki dostępem bez klucza to Printables (nieoficjalnie) — dlatego MVP opiera się na nim.
@@ -146,17 +148,22 @@ Stos: **Kotlin 2.1, Jetpack Compose + Material 3, Hilt, Room, Retrofit/OkHttp, k
 ```
 pl.u1companion
 ├─ U1CompanionApp, MainActivity
+├─ core/model/CanonicalCategory.kt   wspólna taksonomia kategorii
 ├─ core/model/Models.kt              SourceId, SortOrder, LicenseFamily, FileKind, Dimensions,
 │                                    ModelSummary, ModelDetail, ModelFile, SearchFilters, SearchQuery
 ├─ data/source/                      ModelSource, SourceCapabilities, AccessMode, SourceException,
 │  │                                 AggregatedSearchPagingSource, ClientSideFilter, SourceRegistry
 │  ├─ printables/PrintablesSource    (realny adapter, GraphQL)
 │  ├─ thingiverse/ThingiverseSource  (realny adapter, wymaga tokenu)
-│  ├─ web/WebAssistedSources         (MakerWorld, Thangs, MMF, Cults3D, Creality, GrabCAD, CGTrader, Yeggi)
+│  ├─ myminifactory/MyMiniFactorySource (oficjalne API v2, klucz; pobieranie przez WebView)
+│  ├─ cults3d/Cults3dSource          (oficjalne GraphQL, login+klucz; pobieranie przez WebView)
+│  ├─ web/WebAssistedSources         (MakerWorld, Thangs, Creality, GrabCAD, CGTrader, Yeggi)
 │  └─ demo/DemoSource                (fake data)
-├─ data/local/                       Room: AppDatabase, Entities, Daos
-├─ data/repo/                        ModelRepository, LibraryRepository
-├─ data/settings/                    SettingsRepository (DataStore)
+├─ data/category/                    CategoryMapper (taksonomia wspólna), CategoryRepository (cache, plan zapytań)
+├─ data/local/                       Room: AppDatabase (v2), Entities, Daos
+├─ data/repo/                        ModelRepository (+ adnotacje SearchNote), LibraryRepository, GeometryRepository
+├─ geometry/                         StlParser, ThreeMfInspector, MiniXml, BoundingBox, GeometryAnalyzer (FitStatus, ModelFacts)
+├─ data/settings/                    SettingsRepository (DataStore, ApiCredentials), SecretCipher (Android Keystore AES-GCM)
 ├─ download/                         DownloadWorker, DownloadRepository
 ├─ printer/discovery/                PrinterDiscovery (NSD: _snapmaker._tcp, _moonraker._tcp)
 ├─ printer/moonraker/                MoonrakerClient (HTTP+WS), PrinterStatus, ToolStatus, U1Objects
@@ -178,9 +185,11 @@ Domena (niezależna od serwisu):
 - `ModelDetail(summary, descriptionHtml, images[], files[], tags[], dimensions?)`.
 - `ModelFile(id, name, sizeBytes, kind, printerHint, sourceFileType)` + `isLikelyForU1` (heurystyka nazwy: „U1”, „Snapmaker U1”).
 - `License(code, name, family)`; `LicenseFamily` z flagami `commercial`, `derivatives` — mapowanie heurystyczne z tekstu.
-- `SearchQuery(text, SearchFilters(sources, categoryId, licenses, onlyFree, onlyPrintReady, onlyU1Profile, onlyFitsU1, onlyCommercialUse, sort))` — serializowalne (zapisane wyszukiwania, argument nawigacji).
+- `SearchQuery(text, SearchFilters(sources, category: CanonicalCategory?, sourceCategory: SourceCategoryRef?, licenses, onlyFree, onlyPrintReady, onlyU1Profile, onlyFitsU1, onlyCommercialUse, sort))` — serializowalne (zapisane wyszukiwania, argument nawigacji).
+- `Category(id, name, parentId, source, canonical)` — kategoria natywna serwisu; `CanonicalCategory` — wspólna taksonomia (16 pozycji, np. Dom i ogród, Narzędzia i organizery, Modele testowe…), patrz §6.1.1.
+- `ModelFacts(fit: FITS|TOO_BIG|UNKNOWN, u1Profile?, largestPart?, printerModel?)` — fakty znane po analizie pobranych plików.
 
-Room (`u1companion.db`, v1, eksport schematu):
+Room (`u1companion.db`, **v2**, eksport schematu, `AutoMigration(1→2)`):
 
 | Tabela | Klucz | Zawartość |
 |---|---|---|
@@ -190,6 +199,8 @@ Room (`u1companion.db`, v1, eksport schematu):
 | `library_files` | autoinc | plik lokalny: modelKey, nazwa, ścieżka, kind, status QUEUED/DOWNLOADING/READY/FAILED/SLICING/SLICED, licencja, `gcodeMetaJson` |
 | `printers` | `id` (sn z mDNS lub host:port) | host, port, apiKey?, model, firmware, lastSeen |
 | `print_jobs` | autoinc | printerId, zdalna nazwa pliku, configJson, stan |
+| `model_geometry` (v2) | `libraryFileId` | modelKey, wymiary największego elementu i całości, `fitsU1`, `u1Profile`, `printerModel`, osadzone G-code (3MF), błąd analizy |
+| `category_cache` (v2) | `source` | JSON listy kategorii natywnych z adnotacją kanoniczną, `fetchedAt` (TTL 7 dni; przy błędzie sieci używany przeterminowany cache) |
 
 Pliki: `filesDir/library/<source>/<modelId>/…`, wyniki slicingu `filesDir/sliced/`, tymczasowe `cacheDir/upload`, `cacheDir/updates`.
 
@@ -203,16 +214,21 @@ interface ModelSource {
     suspend fun search(query: SearchQuery, page: PageRequest): SearchPage   // kursor nieprzezroczysty
     suspend fun details(modelId: String): ModelDetail
     suspend fun resolveDownload(modelId: String, file: ModelFile): DownloadTicket  // URL + nagłówki
-    suspend fun categories(): List<Category>
+    suspend fun categories(): List<Category>          // płaska lista z parentId; pusta = serwis bez kategorii
+    fun resolveSort(sort: SortOrder, hasText: Boolean): SortResolution   // natywny sort + czy dokładny
     fun webSearchUrl(text: String): String
 }
+// PageRequest(cursor, size, categoryId)  - categoryId natywne, już rozwiązane przez CategoryRepository
 ```
 
 - `AccessMode`: `OFFICIAL_API`, `UNOFFICIAL_API`, `ASSISTED_WEBVIEW`, `LINK_OUT`, `DEMO` — UI pokazuje odpowiednie oznaczenia.
 - Błędy: `SourceException.{NotConfigured, Unauthorized, RateLimited, SchemaChanged, Unsupported, Network}`.
-- `AggregatedSearchPagingSource`: równoległe zapytania do wybranych źródeł, osobny kursor per źródło (`AggregateKey`), przeplatanie wyników round‑robin (metryki serwisów są nieporównywalne, więc nie sortujemy globalnie), deduplikacja, błąd jednego źródła → ostrzeżenie (snackbar), błąd wszystkich → `LoadResult.Error`. Gdy filtry klienckie wytną całą stronę, dociąga do 3 kolejnych (unikamy „zawieszenia” Paging na pustej stronie).
-- `ClientSideFilter`: filtry nieobsługiwane przez API (licencja, darmowe, G-code, profil U1); wartość nieznana (`null`) nie odrzuca wyniku — oznaczenie „?”.
-- Nowy serwis = nowa klasa + wpis w `SourceRegistry` + testy kontraktowe na nagranych odpowiedziach (etap 2).
+- `AggregatedSearchPagingSource`: równoległe zapytania do **strumieni** (źródło × kategoria natywna, `StreamKey`), osobny kursor per strumień (`AggregateKey`), przeplatanie wyników round‑robin (metryki serwisów są nieporównywalne, więc nie sortujemy globalnie), deduplikacja, błąd jednego źródła → ostrzeżenie (snackbar), błąd wszystkich → `LoadResult.Error`. Gdy filtry klienckie wytną całą stronę, dociąga do 3 kolejnych (unikamy „zawieszenia” Paging na pustej stronie).
+- `CategoryRepository.plan()` → `SourcePlan(nativeCategoryIds, clientCategory, notes)` per źródło (szczegóły §6.1.1).
+- `ClientSideFilter`: filtry nieobsługiwane przez API (licencja, darmowe, G-code, profil U1, kategoria po nazwie, „mieści się” z `ModelFacts`); wartość nieznana (`null`/UNKNOWN) nie odrzuca wyniku — oznaczenie „?”. Wyjątek: „Profil U1” wymaga potwierdzenia (nazwa pliku lub ustawienia z 3MF).
+- Nowy serwis = nowa klasa + wpis w `SourceRegistry` + testy kontraktowe (`SourceContractTest`, MockWebServer): Printables na nagranej odpowiedzi, MMF/Cults3D/Thingiverse na odpowiedziach zgodnych ze specyfikacją (nie testowane z prawdziwymi kluczami).
+- Źródła z `inAppDownload=false` (MMF, Cults3D): przyciski pobierania w szczegółach otwierają stronę modelu w WebView; pobrany plik trafia do Biblioteki z `modelKey`, więc analiza wymiarów/profilu łączy się z modelem.
+- Chipy źródeł: ikona klucza (API z kluczem, „· brak klucza” gdy nieskonfigurowane), ikona „nieoficjalne API” (Printables), chipy „↗” dla serwisów tylko przez przeglądarkę.
 
 ### 5.4 Warstwa drukarki
 
@@ -238,7 +254,8 @@ interface ModelSource {
 │ └──────────────────────────────────────┘ │
 │ [✓Printables] [Thingiverse] [Demo]  →    │  źródła z API (multi-select)
 │ [⚙Filtry ③] [⇅Popularne▾] [✓Darmowe]     │  szybkie filtry
-│ [Z G-code/3MF] [Profil U1]           →   │
+│ [Z G-code/3MF] [Profil U1] [Mieści się 270³] [Dom i ogród ✕] → │
+│ ≈ Printables: sortowanie „Najczęściej pobierane” … użyto: makes  │  adnotacje (rozwijane)
 │ ┌────────────┐ ┌────────────┐            │
 │ │  [obraz] ♡ │ │  [obraz] ♥ │            │  siatka adaptacyjna (≥168dp)
 │ │Printables  │ │Thingiverse │            │  znacznik źródła
@@ -246,6 +263,7 @@ interface ModelSource {
 │ │maker123    │ │jan_k       │            │
 │ │👍2.1k ⬇14k │ │👍830 ⬇5.2k │            │
 │ │[CC-BY][U1] │ │[CC0][G-code]│           │  licencja, płatny, U1/G-code
+│ │[✓ 270³]    │ │[? 270³]    │            │  ✓ mieści się / ✗ za duży / ? nieznane
 │ └────────────┘ └────────────┘            │
 │        … infinite scroll (Paging 3) …     │
 │  ◌ ładowanie / [Błąd — ponów]             │
@@ -266,7 +284,13 @@ Arkusz „Filtry” (ModalBottomSheet):
 │ Sortowanie: [Trafność][✓Popularne]        │
 │   [Najnowsze][Najczęściej pobierane]      │
 │   [Najbardziej lubiane][Najwyżej oceniane]│
-│ Kategoria: [Dom ▾]          (etap 2)      │
+│ ≈ adnotacje (sort zastąpiony, kategoria   │
+│   nieobsługiwana przez serwis)            │
+│ Kategoria: [Wszystkie][Dom i ogród][Narzę-│  wspólne (kanoniczne)
+│   dzia i organizery][Gadżety]…            │
+│  Kategorie Printables:                    │  drzewo natywne serwisu
+│   [3D Printers ▾][✓Household ▾][Gadgets ▾]│
+│     [Kitchen][Bathroom][Garage]…          │  podkategorie po rozwinięciu
 │ Licencja: [CC0][✓CC BY][CC BY-SA][CC BY-NC]│
 │   [CC BY-NC-SA][CC BY-ND][GPL][Inna]…      │
 │ Tylko z prawem użytku komercyjnego  [ ]   │
@@ -282,15 +306,25 @@ Arkusz „Filtry” (ModalBottomSheet):
 ```
 
 Szczegóły zachowania:
-- **Sortowanie** mapowane per adapter (`supportedSorts`); niewspierane → najbliższy odpowiednik (Printables „Najczęściej pobierane” → `makes_count`) z adnotacją w UI (etap 2).
+- **Sortowanie** mapowane per adapter przez `resolveSort()`; niewspierane → najbliższy odpowiednik z adnotacją „≈” nad listą i w arkuszu filtrów. Printables: Trafność bez frazy → popularne, Najbardziej lubiane → popularne, Najczęściej pobierane → `makes_count` (liczba wydruków). Thingiverse: Najwyżej oceniane/lubiane → popularne, Najczęściej pobierane → `makes` ([NIEZWERYFIKOWANE]).
 - **Filtr źródła** — tylko źródła z API; serwisy bez API w stopce jako „szukaj także w…” (WebView z tą samą frazą).
 - **Tylko darmowe** — domyślnie włączone; Printables `premium/price`, Cults3D `price`.
 - **Tylko z G-code/3MF** — Printables zna `gcodes{}` już w wynikach; inne źródła → weryfikacja w szczegółach.
-- **Profil U1** — heurystyka nazw plików G-code/3MF („U1”, „Snapmaker U1”) + (etap 3) odczyt `Metadata/project_settings.config` z 3MF po pobraniu.
-- **Mieści się w U1** — wymiary rzadko są w API: liczone po pobraniu (bounding box STL / 3MF, etap 2) i cache’owane; w liście ikona „?”, w szczegółach ostrzeżenie.
+- **Profil U1** — heurystyka nazw plików G-code/3MF („U1”, „Snapmaker U1”) **oraz** po pobraniu 3MF: `Metadata/project_settings.config` (`printer_model`, `printer_settings_id`, `filament_type`). 3MF z osadzonym `Metadata/plate_N.gcode` i profilem U1 → ekran druku używa tego G-code bez slicingu. 3MF innej drukarki (np. Bambu z MakerWorld) → „wymaga ponownego cięcia”.
+- **Mieści się w U1** — wymiary rzadko są w API: liczone po pobraniu pliku (STL binarny/ASCII, 3MF z komponentami w osobnych plikach — rozszerzenie Production) w `DownloadWorker` i zapisywane w `model_geometry`. Decyduje **największy element** (elementy 3MF można drukować osobno). Lista: tag „✓/✗/? 270³”; filtr odrzuca tylko modele znane jako za duże. Szczegóły: karta wymiarów z ostrzeżeniem i przyciskiem „Pobierz i sprawdź wymiary” (pobiera najmniejszy plik STL/3MF). Wolumen w jednym miejscu: `Dimensions.SNAPMAKER_U1` (270×270×270 mm wg profilu Orca).
 - **Ulubione** (serce na karcie i w szczegółach), **historia** (wejścia, pobrania, wysyłki), **zapisane wyszukiwania** (pełny `SearchQuery` w JSON; uruchomienie z Biblioteki; etap 4 — powiadomienia o nowych wynikach).
 - **Infinite scroll**: `PagingConfig(pageSize=20, prefetchDistance=10)`, `cachedIn(viewModelScope)`, stopka ładowania/błędu z „Ponów”.
 - Ostrzeżenia częściowe (np. „Thingiverse: brak tokenu”) jako snackbar, lista działa dalej.
+
+#### 6.1.1 Kategorie — model i działanie
+
+- Każdy serwis ma własne drzewo (`ModelSource.categories()`); `CategoryRepository` pobiera je i cache’uje (pamięć + Room, TTL 7 dni).
+- `CategoryMapper` przypisuje kategoriom natywnym `CanonicalCategory` po słowach kluczowych w nazwie (pierwsze dopasowanie wg kolejności enumu). Podkategoria dziedziczy kategorię rodzica, chyba że pasuje do kategorii „przejmującej” (Modele testowe, Narzędzia i organizery, Miniatury) i nie pasuje do kategorii rodzica — np. `3D Printers > Test Models` → Modele testowe, `Hobby & Makers > Tools` → Narzędzia, ale `Healthcare > Medical Tools` zostaje Zdrowie. Wszystkie 14 kategorii głównych Printables mają odpowiednik (test na zapisanej odpowiedzi API).
+- Użytkownik wybiera:
+  - **kategorię wspólną** → dla każdego źródła z filtrem serwerowym rozwijana na kategorie natywne „najwyżej w drzewie” (np. Dom i ogród → Printables `Household` id 3; Narzędzia → `Tools` + `Organizers`). Kilka kategorii natywnych = kilka strumieni wyników tego samego źródła (max 3, ponad limit — adnotacja);
+  - **kategorię natywną** z drzewa danego serwisu → dokładnie ta kategoria w tym serwisie, a w pozostałych jej kategoria kanoniczna.
+- Źródło bez filtra kategorii w API (Thingiverse) albo bez odpowiednika → filtr po stronie aplikacji po nazwie kategorii wyniku (gdy znana; nieznana nie odrzuca) + adnotacja „≈”.
+- Wybrana kategoria widoczna jako chip z „✕” w wierszu szybkich filtrów.
 
 ### 6.2 Szczegóły modelu
 ```
@@ -412,7 +446,7 @@ Pierwsze uruchomienie: (1) skan mDNS i dodanie drukarki, (2) opcjonalnie adres s
 ## 9. Bezpieczeństwo
 
 - Ruch do internetu tylko HTTPS. Cleartext dopuszczony globalnie (Moonraker i serwer slicingu w LAN działają po HTTP; adresów nie da się wyliczyć w `network_security_config`). Etap 3: `LanAddressPolicy` — HTTP tylko do adresów prywatnych (RFC1918/link-local/`.local`).
-- Brak sekretów w APK; tokeny użytkownika w DataStore (prywatny katalog, `allowBackup=false`); etap 3: szyfrowanie kluczem z Android Keystore.
+- Brak sekretów w APK; klucze/tokeny użytkownika (Thingiverse, MyMiniFactory, Cults3D, serwer slicingu) w DataStore (prywatny katalog, `allowBackup=false`), **zaszyfrowane AES‑256‑GCM kluczem z Android Keystore** (`SecretCipher`, format `enc1:<iv>:<ct>`; stare wartości jawne migrowane przy zapisie). Adaptery dostają klucze przez interfejs `ApiCredentials` (w testach podmieniany).
 - Moonraker U1 nie ma autoryzacji dla klientów z LAN — każdy w sieci może sterować drukarką; aplikacja nie pogarsza tego, ale ostrzega w dokumentacji. Wspierany `X-Api-Key`.
 - Akcje fizyczne (start, anuluj) wymagają jawnego kliknięcia; anuluj/pauza z potwierdzeniem. Brak automatycznego startu z tła.
 - Nazwy plików sanityzowane (`[^A-Za-z0-9._ -]` → `_`), pliki w prywatnym katalogu aplikacji.
@@ -464,8 +498,8 @@ Pierwsze uruchomienie: (1) skan mDNS i dodanie drukarki, (2) opcjonalnie adres s
 |---|---|---|
 | **0 (zrobione)** | Research, DESIGN.md, szkielet Gradle, interfejsy, Printables/Thingiverse, klient Moonraker, mDNS, ekrany Compose, OTA szkielet, serwer slicingu szkielet | `assembleDebug` przechodzi |
 | **1 — MVP druku** | Test na U1 (gdy wolna): upload + start małego G-code, `SET_PRINT_EXTRUDER_MAP` vs `PRINT_START`, mDNS z telefonu; ekran statusu z pauzą/anulowaniem; obsługa intencji „Otwórz w” dla G-code | Benchy z telefonu na U1 |
-| **2 — Moduł projektów** | Printables: kategorie, licencje, pełne sortowanie; Thingiverse z prawdziwym tokenem; cache Room detali; wymiary z STL/3MF (bounding box); filtr „mieści się”; testy kontraktowe na nagranych odpowiedziach; ostrzeżenia z potwierdzeniem | Wyszukiwanie w 2 serwisach z wszystkimi filtrami |
-| **3 — Slicing** | Uruchomienie slicer-server z OrcaSlicer i profilami U1 (PC), weryfikacja CLI, profile z `/profiles`, 3MF z MakerWorld (reset ustawień Bambu), multi-material; mDNS serwera; MyMiniFactory/Cults3D adaptery; `LanAddressPolicy`, szyfrowanie tokenów | STL z Printables → G-code → druk PETG |
+| **2 — Moduł projektów** | ✅ kategorie (Printables serwerowo, taksonomia wspólna, drzewo w UI), ✅ adnotacje sortowania, ✅ wymiary z STL/3MF + filtr „mieści się” + cache Room, ✅ profil U1 z 3MF (+ osadzony G-code), ✅ testy jednostkowe parserów/mapowania/filtrów. Pozostaje: Thingiverse z prawdziwym tokenem (kategorie, sort), cache Room detali, testy kontraktowe adapterów, filtr licencji serwerowy (brak w API Printables — [NIEZWERYFIKOWANE]) | Wyszukiwanie w 2 serwisach z wszystkimi filtrami |
+| **3 — Slicing** | Uruchomienie slicer-server z OrcaSlicer i profilami U1 (PC), weryfikacja CLI, profile z `/profiles`, 3MF z MakerWorld (reset ustawień Bambu), multi-material; mDNS serwera; ✅ adaptery MyMiniFactory/Cults3D (do weryfikacji z kluczami), OAuth MMF (pobieranie w aplikacji), `LanAddressPolicy`, ✅ szyfrowanie tokenów | STL z Printables → G-code → druk PETG |
 | **4 — Komfort** | Powiadomienia o postępie druku (foreground service/WS), zapisane wyszukiwania z powiadomieniami, timelapse/kamera, CI wydań OTA, podział na moduły Gradle | — |
 
 ---
@@ -474,6 +508,8 @@ Pierwsze uruchomienie: (1) skan mDNS i dodanie drukarki, (2) opcjonalnie adres s
 
 | Ryzyko | Wpływ | Mitigacja |
 |---|---|---|
+| Mapowanie kategorii po słowach kluczowych myli się dla nowych/obcojęzycznych nazw | Złe wyniki filtra wspólnego | Testy na zapisanej liście kategorii, możliwość wyboru kategorii natywnej, aktualizacja słów kluczowych przez OTA |
+| Analiza dużych 3MF/STL (100+ MB) na telefonie | Czas/bateria | Analiza strumieniowa (bez trzymania siatki w pamięci) w `DownloadWorker` w tle; przy obróconych elementach bbox z narożników — wynik zachowawczy |
 | Printables zmieni/zablokuje GraphQL | Utrata głównego źródła | Izolacja w adapterze, `SchemaChanged`, szybka poprawka przez OTA, Thingiverse jako drugie źródło |
 | ToS serwisów zabraniają automatycznego dostępu | Prawne | Prywatny użytek, oficjalne API gdzie są, WebView zamiast scrapingu |
 | OrcaSlicer CLI niestabilne/zmienne | Slicing nie działa | Przypięta wersja w Dockerze, testy na zestawie modeli, log błędów do aplikacji |
@@ -492,7 +528,11 @@ Pierwsze uruchomienie: (1) skan mDNS i dodanie drukarki, (2) opcjonalnie adres s
 2. **Snapmaker Orca vs upstream OrcaSlicer**: na drukarce działa G-code z OrcaSlicer 2.4.2 (upstream ma profile U1). Proponuję upstream (łatwiejszy CLI/Docker). Zgoda?
 3. **Mapowanie głowic**: preferujesz mapowanie w aplikacji (`SET_PRINT_EXTRUDER_MAP` przed startem) czy na serwerze slicingu (cięcie od razu pod fizyczne głowice)? Do decyzji po teście z etapu 1.
 4. **Kamera**: wystarczy snapshot co kilka sekund, czy instalacja nieoficjalnego firmware (WebRTC) wchodzi w grę?
-5. **OTA**: nazwa repozytorium GitHub (owner/name) i czy repo będzie publiczne.
+5. **OTA**: repozytorium ustawione na `czester611/3dp` — czy będzie publiczne (wymagane przez OTA bez tokenu)?
+6. **„Mieści się w U1” dla modeli wieloczęściowych**: obecnie decyduje największy element 3MF/STL (części można drukować osobno). Alternatywa: wymagać, by cały układ płyty z 3MF mieścił się naraz. Która semantyka?
+7. **Wymiary przed pobraniem**: czy akceptowalne jest automatyczne pobieranie najmniejszego STL/3MF w tle dla modeli w wynikach (np. tylko na Wi‑Fi), żeby filtr „mieści się” działał bez wchodzenia w szczegóły? Obecnie tylko na żądanie (koszt transferu, obciążenie serwisu).
+8. **Pobieranie MyMiniFactory w aplikacji**: z kluczem API pobieranie jest niemożliwe (tylko OAuth). Opcje: (a) zostać przy WebView (obecnie; zero dodatkowej konfiguracji), (b) dodać logowanie OAuth2 MMF (wymaga rejestracji aplikacji u MMF i redirect URI — pobieranie bez przeglądarki, także `archive_download_url`).
+9. **Limit Cults3D ~500 zapytań/dzień**: przy infinite scroll i wielu źródłach łatwo go wyczerpać. Opcje: (a) Cults3D domyślnie wyłączony w źródłach (obecnie użytkownik włącza chipem), (b) mniejsze strony + cache wyników na 1 h, (c) licznik dzienny z ostrzeżeniem.
 
 ---
 
@@ -506,6 +546,7 @@ Pierwsze uruchomienie: (1) skan mDNS i dodanie drukarki, (2) opcjonalnie adres s
 - OrcaSlicer: [profile Snapmaker U1](https://github.com/OrcaSlicer/OrcaSlicer/tree/main/resources/profiles/Snapmaker), [CLI mode wiki](https://www.orcaslicer.com/wiki/cli/cli_mode), [Printago — Orca CLI reference](https://printago.io/blog/orca-slicer-cli-reference)
 - Printables: [Forum Prusa — publiczne REST API?](https://forum.prusa3d.com/forum/general-discussion-user-experience-ideas/is-there-a-publicly-available-rest-api), [Forum Bambu — scraping/API](https://forum.bambulab.com/t/scrape-website-data-api/113401)
 - Adaptery referencyjne (kod zewnętrzny): [codeofaxel/Kiln marketplaces](https://github.com/codeofaxel/Kiln)
-- MyMiniFactory: [API guidelines](https://www.myminifactory.com/pages/api-guidelines), [For developers](https://www.myminifactory.com/pages/for-developers)
+- MyMiniFactory: [oficjalna specyfikacja OpenAPI (api-documentation)](https://github.com/MyMiniFactory/api-documentation), [API guidelines](https://www.myminifactory.com/pages/api-guidelines), [For developers](https://www.myminifactory.com/pages/for-developers)
+- Cults3D: [społecznościowe notatki o API GraphQL (cults3d-api-docs)](https://github.com/CheekyCodexConjurer/cults3d-api-docs)
 - CGTrader: [API docs](https://api.cgtrader.com/docs/overview.html), [Microsoft connector](https://learn.microsoft.com/en-us/connectors/cgtrader)
 - Thangs: [TCT Magazine — Physna launches Thangs](https://www.tctmagazine.com/additive-manufacturing-3d-printing-news/physna-launches-thangs-geometric-search-engine-3d-model-crea/)

@@ -106,9 +106,15 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
     val ctx = LocalContext.current
 
     var token by remember { mutableStateOf("") }
+    var mmfKey by remember { mutableStateOf("") }
+    var cultsUser by remember { mutableStateOf("") }
+    var cultsKey by remember { mutableStateOf("") }
     var slicerUrl by remember { mutableStateOf("") }
     var slicerToken by remember { mutableStateOf("") }
-    LaunchedEffect(s) { token = s.thingiverseToken; slicerUrl = s.slicerServerUrl; slicerToken = s.slicerServerToken }
+    LaunchedEffect(s) {
+        token = s.thingiverseToken; slicerUrl = s.slicerServerUrl; slicerToken = s.slicerServerToken
+        mmfKey = s.mmfApiKey; cultsUser = s.cultsUsername; cultsKey = s.cultsApiKey
+    }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Ustawienia") }) }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -124,7 +130,13 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
             Text("Serwisy z modelami", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(token, { token = it }, label = { Text("Thingiverse App Token") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
             Text("Token wygenerujesz na thingiverse.com/apps/create (typ: Desktop/App). Printables działa bez klucza.", style = MaterialTheme.typography.bodySmall)
-            Button(onClick = { vm.save(s.copy(thingiverseToken = token)) }) { Text("Zapisz") }
+            OutlinedTextField(mmfKey, { mmfKey = it }, label = { Text("MyMiniFactory — klucz API") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            Text("Klucz z myminifactory.com (Settings → Developer / API). Z kluczem: wyszukiwanie i szczegóły; pobieranie plików przez stronę (wymaga logowania).", style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(cultsUser, { cultsUser = it }, label = { Text("Cults3D — login") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(cultsKey, { cultsKey = it }, label = { Text("Cults3D — klucz API") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            Text("Klucz z cults3d.com/en/api/keys. Limit serwisu ok. 500 zapytań dziennie. Pobieranie przez stronę.", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { vm.save(s.copy(thingiverseToken = token, mmfApiKey = mmfKey, cultsUsername = cultsUser, cultsApiKey = cultsKey)) }) { Text("Zapisz klucze") }
+            Text("Klucze są szyfrowane kluczem z Android Keystore i nie opuszczają telefonu (poza zapytaniami do danego serwisu).", style = MaterialTheme.typography.bodySmall)
 
             HorizontalDivider()
             Text("Aktualizacje aplikacji", style = MaterialTheme.typography.titleMedium)

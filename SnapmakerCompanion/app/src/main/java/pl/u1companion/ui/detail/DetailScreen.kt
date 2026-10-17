@@ -69,6 +69,13 @@ import pl.u1companion.data.local.HistoryType
 import pl.u1companion.data.repo.LibraryRepository
 import pl.u1companion.data.repo.ModelRepository
 import pl.u1companion.download.DownloadRepository
+import pl.u1companion.data.source.SourceRegistry
+import pl.u1companion.data.repo.GeometryRepository
+import pl.u1companion.geometry.FitStatus
+import pl.u1companion.geometry.GeometryAnalyzer
+import pl.u1companion.geometry.ModelFacts
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import javax.inject.Inject
 
 sealed interface DetailState {
@@ -82,18 +89,37 @@ class DetailViewModel @Inject constructor(
     private val repo: ModelRepository,
     private val library: LibraryRepository,
     private val downloads: DownloadRepository,
+    private val geometry: GeometryRepository,
+    private val registry: SourceRegistry,
 ) : ViewModel() {
     val state = MutableStateFlow<DetailState>(DetailState.Loading)
+    private val modelKey = MutableStateFlow<String?>(null)
+
+    /** Wymiary / profil U1 z analizy pobranych plików tego modelu (null = jeszcze nie analizowano). */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val facts: StateFlow<ModelFacts?> = modelKey
+        .flatMapLatest { k -> if (k == null) flowOf(null) else geometry.factsFor(k) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
     val favoriteKeys: StateFlow<Set<String>> = library.favoriteKeys.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
     private val _openPrint = Channel<Long>(Channel.BUFFERED)
     val openPrint = _openPrint.receiveAsFlow()
 
     fun load(source: SourceId, id: String) = viewModelScope.launch {
+        modelKey.value = "${source.name}:$id"
         state.value = DetailState.Loading
         state.value = runCatching { repo.details(source, id) }
             .onSuccess { library.recordHistory(HistoryType.VIEWED, it.summary) }
             .fold({ DetailState.Ready(it) }, { DetailState.Error(it.message ?: "Błąd") })
     }
+
+    /** Pobiera najmniejszy plik STL/3MF, żeby policzyć wymiary (analiza po pobraniu w DownloadWorker). */
+    fun checkDimensions(d: ModelDetail) = viewModelScope.launch {
+        if (!canDownloadInApp(d.summary.source)) return@launch
+        val f = d.files.filter { GeometryAnalyzer.supports(it.kind) }.minByOrNull { it.sizeBytes ?: Long.MAX_VALUE } ?: return@launch
+        downloads.enqueue(d.summary, f)
+    }
+
+    fun canDownloadInApp(source: SourceId) = registry[source].capabilities.inAppDownload
 
     fun toggleFavorite(d: ModelDetail) = viewModelScope.launch { library.toggleFavorite(d.summary, d.summary.key in favoriteKeys.value) }
 
@@ -112,12 +138,15 @@ fun DetailScreen(
     modelId: String,
     onBack: () -> Unit,
     onPrint: (libraryFileId: Long) -> Unit,
+    /** Otwarcie strony modelu w wbudowanej przeglądarce (serwisy bez pobierania przez API). */
+    onOpenWeb: (source: SourceId, url: String, modelKey: String) -> Unit = { _, _, _ -> },
     vm: DetailViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(source, modelId) { vm.load(source, modelId) }
     LaunchedEffect(Unit) { vm.openPrint.collect(onPrint) }
     val state by vm.state.collectAsStateWithLifecycle()
     val favs by vm.favoriteKeys.collectAsStateWithLifecycle()
+    val facts by vm.facts.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
 
     Scaffold(topBar = {
@@ -142,14 +171,28 @@ fun DetailScreen(
                 Text("Nie udało się wczytać modelu: ${s.message}")
                 Button(onClick = { vm.load(source, modelId) }) { Text("Ponów") }
             }
-            is DetailState.Ready -> DetailContent(s.detail, Modifier.padding(pad), onDownload = { f, print -> vm.download(s.detail, f, print) })
+            is DetailState.Ready -> DetailContent(
+                s.detail, facts, Modifier.padding(pad), vm.canDownloadInApp(s.detail.summary.source),
+                onDownload = { f, print ->
+                    if (vm.canDownloadInApp(s.detail.summary.source)) vm.download(s.detail, f, print)
+                    else onOpenWeb(s.detail.summary.source, s.detail.summary.webUrl, s.detail.summary.key)
+                },
+                onCheckDimensions = { vm.checkDimensions(s.detail) },
+            )
         }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun DetailContent(d: ModelDetail, modifier: Modifier, onDownload: (ModelFile, Boolean) -> Unit) {
+private fun DetailContent(
+    d: ModelDetail,
+    facts: ModelFacts?,
+    modifier: Modifier,
+    inAppDownload: Boolean,
+    onDownload: (ModelFile, Boolean) -> Unit,
+    onCheckDimensions: () -> Unit,
+) {
     val m = d.summary
     Column(modifier.verticalScroll(rememberScrollState())) {
         // Galeria
@@ -180,16 +223,16 @@ private fun DetailContent(d: ModelDetail, modifier: Modifier, onDownload: (Model
                 }
             }
 
-            d.dimensions?.let { dim ->
-                val fits = dim.fitsIn(Dimensions.SNAPMAKER_U1)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (!fits) Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error)
-                    Text("Wymiary: %.0f × %.0f × %.0f mm — %s".format(dim.xMm, dim.yMm, dim.zMm, if (fits) "mieści się w U1" else "NIE mieści się w 270³ mm"))
-                }
-            }
+            DimensionsBlock(d, facts, onCheckDimensions)
 
             Text("Pliki", style = MaterialTheme.typography.titleMedium)
             if (d.files.isEmpty()) Text("Brak plików do pobrania przez API — użyj \"Otwórz w przeglądarce\".")
+            if (!inAppDownload && d.files.isNotEmpty()) {
+                Text(
+                    "${d.summary.source.displayName}: pobieranie tylko przez stronę serwisu (wymaga logowania) — przyciski otworzą wbudowaną przeglądarkę, a pobrany plik trafi do Biblioteki.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             d.files.forEach { f -> FileRow(f, onDownload) }
 
             if (!d.descriptionHtml.isNullOrBlank()) {
@@ -225,4 +268,38 @@ private fun FileRow(f: ModelFile, onDownload: (ModelFile, Boolean) -> Unit) {
             }
         },
     )
+}
+
+/** Wymiary: z API (rzadko) albo z analizy pobranego STL/3MF; ostrzeżenie, gdy model nie mieści się w U1. */
+@Composable
+private fun DimensionsBlock(d: ModelDetail, facts: ModelFacts?, onCheck: () -> Unit) {
+    val vol = Dimensions.SNAPMAKER_U1
+    val volText = "%.0f×%.0f×%.0f mm".format(vol.xMm, vol.yMm, vol.zMm)
+    val dim = facts?.largestPart ?: d.dimensions
+    val status = when {
+        facts != null && facts.fit != FitStatus.UNKNOWN -> facts.fit
+        d.dimensions != null -> if (d.dimensions.fitsIn(vol)) FitStatus.FITS else FitStatus.TOO_BIG
+        else -> FitStatus.UNKNOWN
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            when (status) {
+                FitStatus.TOO_BIG -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error)
+                    Text(" Model NIE mieści się w obszarze U1 ($volText) — przeskaluj lub podziel model.", color = MaterialTheme.colorScheme.error)
+                }
+                FitStatus.FITS -> Text("✓ Mieści się w obszarze U1 ($volText)")
+                FitStatus.UNKNOWN -> Text("? Wymiary nieznane — serwis ich nie podaje.")
+            }
+            dim?.let { Text("Największy element: %.1f × %.1f × %.1f mm".format(it.xMm, it.yMm, it.zMm), style = MaterialTheme.typography.bodySmall) }
+            when (facts?.u1Profile) {
+                true -> Text("✓ Plik 3MF zawiera ustawienia Snapmaker U1" + (facts?.printerModel?.let { " ($it)" } ?: ""), style = MaterialTheme.typography.bodySmall)
+                false -> Text("3MF przygotowany dla: ${facts?.printerModel ?: "innej drukarki"} — wymaga ponownego cięcia dla U1", style = MaterialTheme.typography.bodySmall)
+                null -> {}
+            }
+            if (status == FitStatus.UNKNOWN && d.files.any { GeometryAnalyzer.supports(it.kind) }) {
+                OutlinedButton(onClick = onCheck) { Text("Pobierz i sprawdź wymiary") }
+            }
+        }
+    }
 }

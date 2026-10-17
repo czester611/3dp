@@ -32,6 +32,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -48,6 +50,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -81,13 +84,19 @@ import androidx.paging.LoadState
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import coil.compose.AsyncImage
+import pl.u1companion.core.model.CanonicalCategory
+import pl.u1companion.core.model.Category
+import pl.u1companion.core.model.Dimensions
 import pl.u1companion.core.model.LicenseFamily
 import pl.u1companion.core.model.ModelSummary
 import pl.u1companion.core.model.SearchFilters
 import pl.u1companion.core.model.SortOrder
 import pl.u1companion.core.model.SourceId
 import pl.u1companion.data.source.AccessMode
+import pl.u1companion.data.source.ClientSideFilter
 import pl.u1companion.data.source.ModelSource
+import pl.u1companion.geometry.FitStatus
+import pl.u1companion.geometry.ModelFacts
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,6 +110,11 @@ fun BrowseScreen(
     val query by vm.query.collectAsStateWithLifecycle()
     val favorites by vm.favoriteKeys.collectAsStateWithLifecycle()
     val activeFilters by vm.activeFilterCount.collectAsStateWithLifecycle()
+    val notes by vm.notes.collectAsStateWithLifecycle()
+    val facts by vm.facts.collectAsStateWithLifecycle()
+    val trees by vm.categoryTrees.collectAsStateWithLifecycle()
+    val availability by vm.availability.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.refreshAvailability() } // np. po powrocie z Ustawień z nowym kluczem
     val items = vm.results.collectAsLazyPagingItems()
     val snackbar = remember { SnackbarHostState() }
     var showFilters by remember { mutableStateOf(false) }
@@ -141,11 +155,28 @@ fun BrowseScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(vm.searchableSources, key = { it.id }) { src ->
+                    val configured = availability[src.id] != false
                     FilterChip(
                         selected = src.id in query.filters.sources,
                         onClick = { vm.toggleSource(src.id) },
+                        label = { Text(src.id.displayName + accessSuffix(src, configured)) },
+                        leadingIcon = {
+                            val icon = when {
+                                src.id in query.filters.sources -> Icons.Default.Check
+                                src.capabilities.requiresCredential -> Icons.Default.Key
+                                src.capabilities.access == AccessMode.UNOFFICIAL_API -> Icons.Default.Science
+                                else -> null
+                            }
+                            icon?.let { Icon(it, null, Modifier.size(16.dp)) }
+                        },
+                    )
+                }
+                // Serwisy bez API: otwierane w wbudowanej przeglądarce z bieżącą frazą
+                items(vm.webSources.filter { it.capabilities.access == AccessMode.ASSISTED_WEBVIEW || it.capabilities.access == AccessMode.LINK_OUT }, key = { "web-" + it.id }) { src ->
+                    AssistChip(
+                        onClick = { onOpenWebSource(src.id, src.webSearchUrl(query.text)) },
                         label = { Text(src.id.displayName) },
-                        leadingIcon = if (src.id in query.filters.sources) { { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) } } else null,
+                        leadingIcon = { Icon(Icons.Default.OpenInBrowser, "przez przeglądarkę", Modifier.size(16.dp)) },
                     )
                 }
             }
@@ -158,8 +189,11 @@ fun BrowseScreen(
                 onToggleFree = { vm.updateFilters { f -> f.copy(onlyFree = !f.onlyFree) } },
                 onTogglePrintReady = { vm.updateFilters { f -> f.copy(onlyPrintReady = !f.onlyPrintReady) } },
                 onToggleU1 = { vm.updateFilters { f -> f.copy(onlyU1Profile = !f.onlyU1Profile) } },
-                onOpenFilters = { showFilters = true },
+                onToggleFits = { vm.updateFilters { f -> f.copy(onlyFitsU1 = !f.onlyFitsU1) } },
+                onClearCategory = { vm.setCategory(null) },
+                onOpenFilters = { vm.loadCategories(); showFilters = true },
             )
+            NotesBar(notes.map { it.text })
 
             Box(Modifier.weight(1f)) {
                 LazyVerticalGrid(
@@ -171,7 +205,7 @@ fun BrowseScreen(
                 ) {
                     items(count = items.itemCount, key = items.itemKey { it.key }) { idx ->
                         items[idx]?.let { m ->
-                            ModelCard(m, isFavorite = m.key in favorites, onClick = { onOpenModel(m) }, onFavorite = { vm.toggleFavorite(m) })
+                            ModelCard(m, facts[m.key], isFavorite = m.key in favorites, onClick = { onOpenModel(m) }, onFavorite = { vm.toggleFavorite(m) })
                         }
                     }
                     // Stopka: ładowanie / błąd / koniec + serwisy "przez przeglądarkę"
@@ -205,6 +239,10 @@ fun BrowseScreen(
             FilterSheetContent(
                 filters = query.filters,
                 sources = vm.searchableSources,
+                trees = trees,
+                notes = notes.map { it.text },
+                onSelectCategory = vm::setCategory,
+                onSelectSourceCategory = vm::setSourceCategory,
                 onToggleSource = vm::toggleSource,
                 onToggleLicense = vm::toggleLicense,
                 onUpdate = vm::updateFilters,
@@ -234,6 +272,8 @@ private fun QuickFilterRow(
     onToggleFree: () -> Unit,
     onTogglePrintReady: () -> Unit,
     onToggleU1: () -> Unit,
+    onToggleFits: () -> Unit,
+    onClearCategory: () -> Unit,
     onOpenFilters: () -> Unit,
 ) {
     var sortOpen by remember { mutableStateOf(false) }
@@ -260,11 +300,19 @@ private fun QuickFilterRow(
         item { FilterChip(selected = filters.onlyFree, onClick = onToggleFree, label = { Text("Darmowe") }) }
         item { FilterChip(selected = filters.onlyPrintReady, onClick = onTogglePrintReady, label = { Text("Z G-code/3MF") }) }
         item { FilterChip(selected = filters.onlyU1Profile, onClick = onToggleU1, label = { Text("Profil U1") }) }
+        item { FilterChip(selected = filters.onlyFitsU1, onClick = onToggleFits, label = { Text("Mieści się ${volumeLabel()}") }) }
+        val catLabel = filters.sourceCategory?.let { "${it.source.displayName}: ${it.name}" } ?: filters.category?.label
+        if (catLabel != null) item {
+            InputChip(
+                selected = true, onClick = onClearCategory, label = { Text(catLabel, maxLines = 1) },
+                trailingIcon = { Icon(Icons.Default.Clear, "Usuń kategorię", Modifier.size(16.dp)) },
+            )
+        }
     }
 }
 
 @Composable
-private fun ModelCard(m: ModelSummary, isFavorite: Boolean, onClick: () -> Unit, onFavorite: () -> Unit) {
+private fun ModelCard(m: ModelSummary, facts: ModelFacts?, isFavorite: Boolean, onClick: () -> Unit, onFavorite: () -> Unit) {
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Box {
             AsyncImage(
@@ -292,7 +340,13 @@ private fun ModelCard(m: ModelSummary, isFavorite: Boolean, onClick: () -> Unit,
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 m.license?.let { Tag(it.code ?: it.family.label) }
                 if (!m.isFree) Tag("Płatny")
-                if (m.hasU1Profile == true) Tag("U1") else if (m.hasPrintReadyFile == true) Tag("G-code")
+                if (ClientSideFilter.hasU1Profile(m, facts)) Tag("U1") else if (m.hasPrintReadyFile == true) Tag("G-code")
+                // Wymiary znane dopiero po pobraniu i analizie pliku: ✓ mieści się / ✗ za duży / ? nieznane
+                when (facts?.fit ?: FitStatus.UNKNOWN) {
+                    FitStatus.FITS -> Tag("✓ ${volumeLabel()}")
+                    FitStatus.TOO_BIG -> Tag("✗ ${volumeLabel()}")
+                    FitStatus.UNKNOWN -> Tag("? ${volumeLabel()}")
+                }
             }
         }
     }
@@ -325,6 +379,10 @@ private fun WebSourcesFooter(sources: List<ModelSource>, text: String, onOpen: (
 fun FilterSheetContent(
     filters: SearchFilters,
     sources: List<ModelSource>,
+    trees: List<SourceCategoryTree>,
+    notes: List<String>,
+    onSelectCategory: (CanonicalCategory?) -> Unit,
+    onSelectSourceCategory: (SourceId, Category) -> Unit,
     onToggleSource: (SourceId) -> Unit,
     onToggleLicense: (LicenseFamily) -> Unit,
     onUpdate: ((SearchFilters) -> SearchFilters) -> Unit,
@@ -342,11 +400,7 @@ fun FilterSheetContent(
                     selected = s.id in filters.sources,
                     onClick = { onToggleSource(s.id) },
                     label = {
-                        Text(s.id.displayName + when (s.capabilities.access) {
-                            AccessMode.UNOFFICIAL_API -> " (nieoficjalne API)"
-                            AccessMode.OFFICIAL_API -> if (s.capabilities.requiresCredential) " (wymaga klucza)" else ""
-                            else -> ""
-                        })
+                        Text(s.id.displayName + accessSuffix(s, configured = true, long = true))
                     },
                 )
             }
@@ -358,6 +412,12 @@ fun FilterSheetContent(
                 FilterChip(selected = filters.sort == s, onClick = { onUpdate { it.copy(sort = s) } }, label = { Text(s.label) })
             }
         }
+
+        // Adnotacje: sortowanie zastąpione najbliższym odpowiednikiem / kategoria nieobsługiwana
+        notes.forEach { Text("≈ $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary) }
+
+        SectionTitle("Kategoria")
+        CategorySection(filters, trees, onSelectCategory, onSelectSourceCategory)
 
         SectionTitle("Licencja")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -372,12 +432,11 @@ fun FilterSheetContent(
         SwitchRow("Tylko darmowe", filters.onlyFree) { v -> onUpdate { it.copy(onlyFree = v) } }
         SwitchRow("Tylko z gotowym G-code / 3MF", filters.onlyPrintReady) { v -> onUpdate { it.copy(onlyPrintReady = v) } }
         SwitchRow("Tylko z profilem Snapmaker U1", filters.onlyU1Profile) { v -> onUpdate { it.copy(onlyU1Profile = v) } }
-        SwitchRow("Mieści się w 270×270×270 mm", filters.onlyFitsU1) { v -> onUpdate { it.copy(onlyFitsU1 = v) } }
+        SwitchRow("Mieści się w ${volumeLabel(long = true)}", filters.onlyFitsU1) { v -> onUpdate { it.copy(onlyFitsU1 = v) } }
         Text(
-            "Wymiary i obecność G-code nie zawsze są znane na liście — wyniki z nieznaną wartością są pokazywane z oznaczeniem \"?\" i weryfikowane w szczegółach.",
+            "Wymiary są znane po pobraniu pliku STL/3MF (analiza w tle) — modele z nieznanymi wymiarami zostają na liście z oznaczeniem \"?\". Profil U1: nazwa pliku lub ustawienia drukarki zapisane w 3MF.",
             style = MaterialTheme.typography.bodySmall,
         )
-        // TODO(etap 2): kategoria - lista z ModelSource.categories() dla wybranych źródeł
 
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -404,4 +463,86 @@ private fun compact(n: Int): String = when {
     n >= 1_000_000 -> "%.1fM".format(n / 1_000_000f)
     n >= 1_000 -> "%.1fk".format(n / 1_000f)
     else -> n.toString()
+}
+
+@Composable
+private fun NotesBar(notes: List<String>) {
+    if (notes.isEmpty()) return
+    var expanded by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(horizontal = 12.dp, vertical = 2.dp)) {
+        val shown = if (expanded) notes else notes.take(1)
+        shown.forEach { Text("≈ $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary, maxLines = if (expanded) 3 else 1, overflow = TextOverflow.Ellipsis) }
+        if (!expanded && notes.size > 1) Text("+${notes.size - 1} uwag…", style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/** Kategorie: wspólne (kanoniczne, działają we wszystkich serwisach) + drzewo natywne każdego serwisu. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CategorySection(
+    filters: SearchFilters,
+    trees: List<SourceCategoryTree>,
+    onSelectCategory: (CanonicalCategory?) -> Unit,
+    onSelectSourceCategory: (SourceId, Category) -> Unit,
+) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterChip(selected = filters.category == null && filters.sourceCategory == null, onClick = { onSelectCategory(null) }, label = { Text("Wszystkie") })
+        CanonicalCategory.entries.forEach { c ->
+            FilterChip(
+                selected = filters.sourceCategory == null && filters.category == c,
+                onClick = { onSelectCategory(c) },
+                label = { Text(c.label) },
+            )
+        }
+    }
+    if (trees.isEmpty()) {
+        Text("Wybrane serwisy nie udostępniają drzewa kategorii (lub brak sieci) — działa filtr wspólny.", style = MaterialTheme.typography.bodySmall)
+    }
+    trees.forEach { tree ->
+        var expandedRoot by remember(tree.source) { mutableStateOf<String?>(null) }
+        Text("Kategorie ${tree.source.displayName}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            tree.roots.forEach { (root, children) ->
+                val selected = filters.sourceCategory?.let { it.source == tree.source && it.id == root.id } == true
+                FilterChip(
+                    selected = selected || expandedRoot == root.id,
+                    onClick = {
+                        onSelectSourceCategory(tree.source, root)
+                        expandedRoot = if (expandedRoot == root.id) null else root.id
+                    },
+                    label = { Text(root.name + if (children.isNotEmpty()) " ▾" else "") },
+                )
+            }
+        }
+        val children = tree.roots.firstOrNull { it.first.id == expandedRoot }?.second.orEmpty()
+        if (children.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(start = 12.dp)) {
+                children.forEach { c ->
+                    FilterChip(
+                        selected = filters.sourceCategory?.let { it.source == tree.source && it.id == c.id } == true,
+                        onClick = { onSelectSourceCategory(tree.source, c) },
+                        label = { Text(c.name) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Etykieta wolumenu z jednej stałej (Dimensions.SNAPMAKER_U1). */
+private fun volumeLabel(long: Boolean = false): String {
+    val v = Dimensions.SNAPMAKER_U1
+    val cube = v.xMm == v.yMm && v.yMm == v.zMm
+    return if (long || !cube) "%.0f×%.0f×%.0f mm".format(v.xMm, v.yMm, v.zMm) else "%.0f³".format(v.xMm)
+}
+
+/** Oznaczenie trybu dostępu źródła na chipie. */
+private fun accessSuffix(src: ModelSource, configured: Boolean, long: Boolean = false): String {
+    val c = src.capabilities
+    return when {
+        c.requiresCredential && !configured -> " · brak klucza"
+        long && c.access == AccessMode.UNOFFICIAL_API -> " (nieoficjalne API)"
+        long && c.requiresCredential -> " (oficjalne API, klucz)" + if (!c.inAppDownload) ", pobieranie przez stronę" else ""
+        else -> ""
+    }
 }

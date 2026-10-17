@@ -54,9 +54,7 @@ class WebAssistedSource(
         fun defaults(): List<WebAssistedSource> = listOf(
             WebAssistedSource(SourceId.MAKERWORLD, "https://makerworld.com/en/search/models?keyword={q}"),
             WebAssistedSource(SourceId.THANGS, "https://thangs.com/search/{q}?scope=all"),
-            // MyMiniFactory i Cults3D mają oficjalne API z kluczem - adaptery w etapie 3; do tego czasu WebView.
-            WebAssistedSource(SourceId.MYMINIFACTORY, "https://www.myminifactory.com/search/?query={q}"),
-            WebAssistedSource(SourceId.CULTS3D, "https://cults3d.com/en/search?q={q}"),
+            // MyMiniFactory i Cults3D mają własne adaptery API (MyMiniFactorySource, Cults3dSource).
             WebAssistedSource(SourceId.CREALITY_CLOUD, "https://www.crealitycloud.com/search?keyword={q}"),
             WebAssistedSource(SourceId.GRABCAD, "https://grabcad.com/library?query={q}"),
             WebAssistedSource(SourceId.CGTRADER, "https://www.cgtrader.com/3d-print-models?keywords={q}"),

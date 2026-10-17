@@ -26,6 +26,7 @@ import pl.u1companion.core.model.SourceId
 import pl.u1companion.data.local.AppDatabase
 import pl.u1companion.data.local.LibraryFileEntity
 import pl.u1companion.data.local.LocalFileStatus
+import pl.u1companion.data.repo.GeometryRepository
 import pl.u1companion.data.source.SourceException
 import pl.u1companion.data.source.SourceRegistry
 import java.io.File
@@ -43,6 +44,7 @@ class DownloadWorker @AssistedInject constructor(
     private val http: OkHttpClient,
     private val db: AppDatabase,
     private val json: Json,
+    private val geometry: GeometryRepository,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -65,6 +67,8 @@ class DownloadWorker @AssistedInject constructor(
                 if (!tmp.renameTo(target)) throw IOException("Nie można zapisać pliku")
             }
             db.libraryFiles().updateStatus(libId, LocalFileStatus.READY, path = target.absolutePath, size = target.length())
+            // Wymiary (filtr "mieści się w U1") i profil drukarki z 3MF - błąd analizy nie psuje pobrania.
+            db.libraryFiles().get(libId)?.let { runCatching { geometry.analyze(it) } }
             Result.success()
         } catch (e: SourceException.Unauthorized) {
             db.libraryFiles().updateStatus(libId, LocalFileStatus.FAILED, error = e.message)
@@ -91,6 +95,7 @@ class DownloadRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val db: AppDatabase,
     private val json: Json,
+    private val geometry: GeometryRepository,
 ) {
     val files = db.libraryFiles().observeAll()
 
@@ -120,12 +125,15 @@ class DownloadRepository @Inject constructor(
     }
 
     /** Import pliku spoza serwisów (np. z "Udostępnij" lub WebView MakerWorld). */
-    suspend fun registerLocal(fileName: String, path: String, size: Long, sourceUrl: String?): Long =
-        db.libraryFiles().insert(
+    suspend fun registerLocal(fileName: String, path: String, size: Long, sourceUrl: String?, modelKey: String? = null): Long {
+        val id = db.libraryFiles().insert(
             LibraryFileEntity(
-                modelKey = null, modelTitle = fileName, fileName = fileName, localPath = path,
+                modelKey = modelKey, modelTitle = fileName, fileName = fileName, localPath = path,
                 kind = FileKind.fromFileName(fileName).name, sizeBytes = size, status = LocalFileStatus.READY,
                 sourceUrl = sourceUrl, createdAt = System.currentTimeMillis(),
             ),
         )
+        db.libraryFiles().get(id)?.let { runCatching { geometry.analyze(it) } }
+        return id
+    }
 }

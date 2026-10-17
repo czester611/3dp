@@ -90,3 +90,32 @@ data class PrintJobEntity(
     val finishedAt: Long? = null,
     val state: String,                    // standby/printing/paused/complete/cancelled/error
 )
+
+/** Wynik analizy geometrii/ustawień pobranego pliku STL/3MF (cache dla filtra "mieści się w U1" i profilu U1). */
+@Entity(tableName = "model_geometry", indices = [Index("modelKey")])
+data class ModelGeometryEntity(
+    @PrimaryKey val libraryFileId: Long,
+    val modelKey: String?,
+    val fileName: String,
+    val partX: Float?,
+    val partY: Float?,
+    val partZ: Float?,
+    val overallX: Float?,
+    val overallY: Float?,
+    val overallZ: Float?,
+    val fitsU1: Boolean?,
+    val u1Profile: Boolean?,
+    val printerModel: String?,
+    /** Nazwy osadzonych G-code płyt rozdzielone '\n'. */
+    val embeddedGcodes: String?,
+    val error: String?,
+    val analyzedAt: Long,
+)
+
+/** Cache kategorii natywnych serwisu (JSON listy Category), TTL w CategoryRepository. */
+@Entity(tableName = "category_cache")
+data class CategoryCacheEntity(
+    @PrimaryKey val source: String,
+    val json: String,
+    val fetchedAt: Long,
+)

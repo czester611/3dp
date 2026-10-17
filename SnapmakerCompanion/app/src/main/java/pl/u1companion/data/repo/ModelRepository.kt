@@ -6,35 +6,60 @@ import androidx.paging.PagingData
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import pl.u1companion.core.model.ModelDetail
 import pl.u1companion.core.model.ModelSummary
 import pl.u1companion.core.model.SearchQuery
 import pl.u1companion.core.model.SourceId
+import pl.u1companion.data.category.CategoryRepository
 import pl.u1companion.data.source.AggregatedSearchPagingSource
+import pl.u1companion.data.source.ModelSource
 import pl.u1companion.data.source.SourceRegistry
 import pl.u1companion.data.source.SourceWarning
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Adnotacja do wyników (sortowanie zastąpione, kategoria nieobsługiwana itp.). */
+data class SearchNote(val source: SourceId?, val text: String)
+
 @Singleton
 class ModelRepository @Inject constructor(
     private val registry: SourceRegistry,
+    private val categories: CategoryRepository,
+    private val geometry: GeometryRepository,
 ) {
     private val _warnings = MutableSharedFlow<SourceWarning>(extraBufferCapacity = 16)
     val warnings: SharedFlow<SourceWarning> = _warnings
 
-    /** Prosty cache szczegółów w pamięci (TTL w etapie 2: Room + ETag). */
+    /** Prosty cache szczegółów w pamięci (TTL w etapie 3: Room + ETag). */
     private val detailCache = ConcurrentHashMap<String, ModelDetail>()
 
-    fun search(query: SearchQuery): Flow<PagingData<ModelSummary>> {
-        val sources = registry.searchable().filter { it.id in query.filters.sources }
-        return Pager(
-            config = PagingConfig(pageSize = PAGE_SIZE, prefetchDistance = PAGE_SIZE / 2, enablePlaceholders = false),
-            pagingSourceFactory = {
-                AggregatedSearchPagingSource(sources, query, PAGE_SIZE) { _warnings.tryEmit(it) }
-            },
-        ).flow
+    private fun activeSources(query: SearchQuery): List<ModelSource> =
+        registry.searchable().filter { it.id in query.filters.sources }
+
+    fun search(query: SearchQuery): Flow<PagingData<ModelSummary>> = flow {
+        val plans = categories.plan(activeSources(query), query.filters)
+        emitAll(
+            Pager(
+                config = PagingConfig(pageSize = PAGE_SIZE, prefetchDistance = PAGE_SIZE / 2, enablePlaceholders = false),
+                pagingSourceFactory = {
+                    AggregatedSearchPagingSource(plans, query, PAGE_SIZE, facts = { geometry.factsByModel.value }) { _warnings.tryEmit(it) }
+                },
+            ).flow,
+        )
+    }
+
+    /** Adnotacje dla bieżącego zapytania: zastąpione sortowania + uwagi o kategoriach. */
+    suspend fun notes(query: SearchQuery): List<SearchNote> {
+        val sources = activeSources(query)
+        val sortNotes = sources.mapNotNull { s ->
+            val r = s.resolveSort(query.filters.sort, query.text.isNotBlank())
+            if (r.exact) null else SearchNote(s.id, "${s.id.displayName}: sortowanie „${query.filters.sort.label}” niedostępne — użyto: ${r.nativeLabel}")
+        }
+        val catNotes = categories.plan(sources, query.filters).flatMap { p -> p.notes.map { SearchNote(p.source.id, it) } }
+        return sortNotes + catNotes
     }
 
     suspend fun details(source: SourceId, modelId: String): ModelDetail {

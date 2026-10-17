@@ -30,6 +30,7 @@ import pl.u1companion.data.source.PageRequest
 import pl.u1companion.data.source.SearchPage
 import pl.u1companion.data.source.SourceCapabilities
 import pl.u1companion.data.source.SourceException
+import pl.u1companion.data.source.SortResolution
 import java.io.IOException
 import java.net.URLEncoder
 import java.time.OffsetDateTime
@@ -55,8 +56,9 @@ class PrintablesSource @Inject constructor(
 
     override val capabilities = SourceCapabilities(
         access = AccessMode.UNOFFICIAL_API,
-        supportedSorts = setOf(SortOrder.RELEVANCE, SortOrder.NEWEST, SortOrder.POPULAR, SortOrder.TOP_RATED, SortOrder.MOST_DOWNLOADED),
-        serverCategoryFilter = false, // TODO: zbadać argument kategorii w searchPrints2
+        supportedSorts = setOf(SortOrder.RELEVANCE, SortOrder.NEWEST, SortOrder.POPULAR, SortOrder.TOP_RATED),
+        // searchPrints2(categoryId: ID) - zweryfikowane 2026-10-17; kategoria główna obejmuje podkategorie.
+        serverCategoryFilter = true,
         serverLicenseFilter = false,
         printReadyInSearch = true, // pole gcodes{} dostępne w wynikach
         requiresCredential = false,
@@ -64,24 +66,21 @@ class PrintablesSource @Inject constructor(
         hasPaidContent = true, // "premium" / płatne modele
     )
 
+    /** Adres GraphQL (podmieniany w testach kontraktowych). */
+    internal var endpoint = ENDPOINT
+
     override fun webSearchUrl(text: String) =
         "https://www.printables.com/search/models?q=" + URLEncoder.encode(text, "UTF-8")
 
     override suspend fun search(query: SearchQuery, page: PageRequest): SearchPage {
         val offset = page.cursor?.toIntOrNull() ?: 0
-        val ordering = when (query.filters.sort) {
-            SortOrder.RELEVANCE -> if (query.text.isBlank()) "popular" else "best_match"
-            SortOrder.NEWEST -> "latest"
-            SortOrder.POPULAR, SortOrder.MOST_LIKED -> "popular"
-            SortOrder.TOP_RATED -> "rating"
-            // Brak sortowania po pobraniach w SearchChoicesEnum; najbliższe: makes_count.
-            SortOrder.MOST_DOWNLOADED -> "makes_count"
-        }
+        val ordering = resolveSort(query.filters.sort, query.text.isNotBlank()).nativeValue
         val vars = buildJsonObject {
             put("q", query.text)
             put("limit", page.size)
             put("offset", offset)
             put("ordering", ordering)
+            page.categoryId?.let { put("categoryId", it) }
         }
         val data = graphql<SearchData>(SEARCH_QUERY, vars)
         val result = data.searchPrints2 ?: throw SourceException.SchemaChanged(id, null)
@@ -129,7 +128,38 @@ class PrintablesSource @Inject constructor(
         return DownloadTicket(url = link, fileName = file.name)
     }
 
-    override suspend fun categories(): List<Category> = emptyList() // TODO etap 2
+    /**
+     * Wartości SearchChoicesEnum potwierdzone: best_match, latest, popular, rating, makes_count.
+     * Brak sortowania po pobraniach i po polubieniach -> najbliższe odpowiedniki z adnotacją.
+     */
+    override fun resolveSort(sort: SortOrder, hasText: Boolean): SortResolution = when (sort) {
+        SortOrder.RELEVANCE ->
+            if (hasText) SortResolution(sort, "best_match", "trafność", true)
+            else SortResolution(sort, "popular", "popularne (trafność wymaga frazy)", false)
+        SortOrder.NEWEST -> SortResolution(sort, "latest", "najnowsze", true)
+        SortOrder.POPULAR -> SortResolution(sort, "popular", "popularne", true)
+        SortOrder.TOP_RATED -> SortResolution(sort, "rating", "ocena", true)
+        SortOrder.MOST_LIKED -> SortResolution(sort, "popular", "popularne", false)
+        SortOrder.MOST_DOWNLOADED -> SortResolution(sort, "makes_count", "liczba wydruków (makes)", false)
+    }
+
+    /** Drzewo kategorii (2 poziomy): categories { id name level path { id } }; rodzic = przedostatni element path. */
+    override suspend fun categories(): List<Category> {
+        val data = graphql<CategoriesData>(CATEGORIES_QUERY, buildJsonObject { })
+        return parseCategories(data.categories)
+    }
+
+    internal fun parseCategoriesJson(raw: String): List<Category> =
+        parseCategories(json.decodeFromString<GqlEnvelope<CategoriesData>>(raw).data?.categories.orEmpty())
+
+    private fun parseCategories(list: List<CategoryNodeDto>): List<Category> = list.map { c ->
+        Category(
+            id = c.id,
+            name = c.name ?: c.id,
+            parentId = c.path?.takeIf { it.size >= 2 }?.let { p -> p[p.size - 2].id },
+            source = SourceId.PRINTABLES,
+        )
+    }
 
     // --- GraphQL ---
 
@@ -140,7 +170,7 @@ class PrintablesSource @Inject constructor(
                 put("variables", variables)
             }.toString().toRequestBody(JSON_MT)
             val req = Request.Builder()
-                .url(ENDPOINT)
+                .url(endpoint)
                 .post(body)
                 .header("Accept", "application/json")
                 .build()
@@ -181,7 +211,7 @@ class PrintablesSource @Inject constructor(
         priceCents = price?.let { (it * 100).toInt() }?.takeIf { it > 0 },
         category = category?.name,
         hasPrintReadyFile = gcodes?.isNotEmpty(),
-        hasU1Profile = gcodes?.any { g -> g.name?.contains("U1", ignoreCase = true) == true },
+        hasU1Profile = gcodes?.any { g -> g.name?.let { ModelFile.U1_NAME.containsMatchIn(it) } == true },
     )
 
     private fun FileDto.toFile(type: String) = ModelFile(
@@ -201,6 +231,9 @@ class PrintablesSource @Inject constructor(
     @Serializable private data class SearchData(val searchPrints2: SearchResult? = null)
     @Serializable private data class SearchResult(val totalCount: Int? = null, val items: List<PrintDto> = emptyList())
     @Serializable private data class DetailData(val print: PrintDto? = null)
+    @Serializable private data class CategoriesData(val categories: List<CategoryNodeDto> = emptyList())
+    @Serializable private data class CategoryNodeDto(val id: String, val name: String? = null, val level: Int? = null, val path: List<IdDto>? = null)
+    @Serializable private data class IdDto(val id: String)
     @Serializable private data class DownloadData(val getDownloadLink: DownloadResult? = null)
     @Serializable private data class DownloadResult(val ok: Boolean? = null, val output: DownloadOutput? = null)
     @Serializable private data class DownloadOutput(val link: String? = null)
@@ -240,8 +273,8 @@ class PrintablesSource @Inject constructor(
         val JSON_MT = "application/json".toMediaType()
 
         val SEARCH_QUERY = """
-            query Search(${'$'}q: String!, ${'$'}limit: Int!, ${'$'}offset: Int!, ${'$'}ordering: SearchChoicesEnum) {
-              searchPrints2(query: ${'$'}q, limit: ${'$'}limit, offset: ${'$'}offset, ordering: ${'$'}ordering) {
+            query Search(${'$'}q: String!, ${'$'}limit: Int!, ${'$'}offset: Int!, ${'$'}ordering: SearchChoicesEnum, ${'$'}categoryId: ID) {
+              searchPrints2(query: ${'$'}q, limit: ${'$'}limit, offset: ${'$'}offset, ordering: ${'$'}ordering, categoryId: ${'$'}categoryId) {
                 totalCount
                 items {
                   id name slug likesCount downloadCount datePublished premium price
@@ -253,6 +286,9 @@ class PrintablesSource @Inject constructor(
                 }
               }
             }"""
+
+        val CATEGORIES_QUERY = """
+            query Categories { categories { id name level path { id } } }"""
 
         val DETAIL_QUERY = """
             query Detail(${'$'}id: ID!) {

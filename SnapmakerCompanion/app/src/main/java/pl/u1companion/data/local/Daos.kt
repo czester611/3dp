@@ -93,3 +93,25 @@ interface PrintJobDao {
     @Query("UPDATE print_jobs SET state = :state, finishedAt = :finishedAt WHERE id = :id")
     suspend fun updateState(id: Long, state: String, finishedAt: Long?)
 }
+
+@Dao
+interface GeometryDao {
+    @Query("SELECT * FROM model_geometry")
+    fun observeAll(): Flow<List<ModelGeometryEntity>>
+
+    @Query("SELECT * FROM model_geometry WHERE modelKey = :modelKey")
+    fun observeForModel(modelKey: String): Flow<List<ModelGeometryEntity>>
+
+    @Query("SELECT * FROM model_geometry WHERE libraryFileId = :id")
+    suspend fun get(id: Long): ModelGeometryEntity?
+
+    @Upsert suspend fun upsert(e: ModelGeometryEntity)
+}
+
+@Dao
+interface CategoryCacheDao {
+    @Query("SELECT * FROM category_cache WHERE source = :source")
+    suspend fun get(source: String): CategoryCacheEntity?
+
+    @Upsert suspend fun upsert(e: CategoryCacheEntity)
+}

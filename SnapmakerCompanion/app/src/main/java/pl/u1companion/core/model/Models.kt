@@ -156,7 +156,12 @@ data class ModelFile(
 ) {
     val isLikelyForU1: Boolean
         get() = printerHint?.contains("U1", ignoreCase = true) == true ||
-            Regex("(snapmaker[ _-]?u1|\\bu1\\b)", RegexOption.IGNORE_CASE).containsMatchIn(name)
+            U1_NAME.containsMatchIn(name)
+
+    companion object {
+        /** "U1" jako osobny token (także "model_U1.gcode", "benchy-U1"), ale nie "U10"/"MU1". */
+        val U1_NAME = Regex("snapmaker[ _-]?u1|(?<![a-z0-9])u1(?![a-z0-9])", RegexOption.IGNORE_CASE)
+    }
 }
 
 @Serializable
@@ -169,13 +174,30 @@ data class ModelDetail(
     val dimensions: Dimensions? = null,
 )
 
+/** Kategoria natywna serwisu (np. Printables "Kitchen" id=7). [canonical] uzupełnia CategoryMapper. */
 @Serializable
-data class Category(val id: String, val name: String, val parentId: String? = null)
+data class Category(
+    val id: String,
+    val name: String,
+    val parentId: String? = null,
+    val source: SourceId? = null,
+    val canonical: CanonicalCategory? = null,
+)
+
+/** Wybór kategorii natywnej konkretnego serwisu (podkategoria z drzewa w arkuszu filtrów). */
+@Serializable
+data class SourceCategoryRef(val source: SourceId, val id: String, val name: String)
 
 @Serializable
 data class SearchFilters(
     val sources: Set<SourceId> = setOf(SourceId.PRINTABLES),
-    val categoryId: String? = null,
+    /** Kategoria wspólna dla wszystkich serwisów (mapowana na kategorie natywne). */
+    val category: CanonicalCategory? = null,
+    /**
+     * Kategoria natywna wybrana z drzewa jednego serwisu. Ma pierwszeństwo dla tego serwisu;
+     * dla pozostałych używamy jej kategorii kanonicznej ([category] ustawiane razem z nią).
+     */
+    val sourceCategory: SourceCategoryRef? = null,
     val licenses: Set<LicenseFamily> = emptySet(),
     val onlyFree: Boolean = true,
     val onlyPrintReady: Boolean = false,

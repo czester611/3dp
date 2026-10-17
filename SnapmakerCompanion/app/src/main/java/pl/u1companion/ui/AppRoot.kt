@@ -38,7 +38,7 @@ import pl.u1companion.ui.web.WebSourceScreen
 @Serializable data class BrowseRoute(val queryJson: String? = null)
 @Serializable data class DetailRoute(val source: String, val modelId: String)
 @Serializable data class PrintSetupRoute(val libraryFileId: Long)
-@Serializable data class WebSourceRoute(val source: String, val url: String)
+@Serializable data class WebSourceRoute(val source: String, val url: String, val modelKey: String? = null)
 @Serializable data object LibraryRoute
 @Serializable data object PrintersRoute
 @Serializable data object SettingsRoute
@@ -99,6 +99,7 @@ fun AppRoot() {
                     modelId = r.modelId,
                     onBack = { nav.popBackStack() },
                     onPrint = { id -> nav.navigate(PrintSetupRoute(id)) },
+                    onOpenWeb = { s, url, key -> nav.navigate(WebSourceRoute(s.name, url, key)) },
                 )
             }
             composable<PrintSetupRoute> { entry ->
@@ -106,7 +107,7 @@ fun AppRoot() {
             }
             composable<WebSourceRoute> { entry ->
                 val r = entry.toRoute<WebSourceRoute>()
-                WebSourceScreen(SourceId.valueOf(r.source), r.url, onBack = { nav.popBackStack() })
+                WebSourceScreen(SourceId.valueOf(r.source), r.url, onBack = { nav.popBackStack() }, modelKey = r.modelKey)
             }
             composable<LibraryRoute> {
                 LibraryScreen(

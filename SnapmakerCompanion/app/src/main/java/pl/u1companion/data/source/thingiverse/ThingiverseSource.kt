@@ -17,7 +17,8 @@ import pl.u1companion.core.model.ModelSummary
 import pl.u1companion.core.model.SearchQuery
 import pl.u1companion.core.model.SortOrder
 import pl.u1companion.core.model.SourceId
-import pl.u1companion.data.settings.SettingsRepository
+import pl.u1companion.data.settings.ApiCredential
+import pl.u1companion.data.settings.ApiCredentials
 import pl.u1companion.data.source.AccessMode
 import pl.u1companion.data.source.DownloadTicket
 import pl.u1companion.data.source.ModelSource
@@ -25,6 +26,8 @@ import pl.u1companion.data.source.PageRequest
 import pl.u1companion.data.source.SearchPage
 import pl.u1companion.data.source.SourceCapabilities
 import pl.u1companion.data.source.SourceException
+import pl.u1companion.data.source.SortResolution
+import pl.u1companion.core.model.Category
 import java.io.IOException
 import java.net.URLEncoder
 import java.time.OffsetDateTime
@@ -44,35 +47,34 @@ import javax.inject.Singleton
 class ThingiverseSource @Inject constructor(
     private val http: OkHttpClient,
     private val json: Json,
-    private val settings: SettingsRepository,
+    private val credentials: ApiCredentials,
 ) : ModelSource {
 
     override val id = SourceId.THINGIVERSE
 
     override val capabilities = SourceCapabilities(
         access = AccessMode.OFFICIAL_API,
-        supportedSorts = setOf(SortOrder.RELEVANCE, SortOrder.POPULAR, SortOrder.NEWEST, SortOrder.MOST_DOWNLOADED, SortOrder.MOST_LIKED),
+        supportedSorts = setOf(SortOrder.RELEVANCE, SortOrder.POPULAR, SortOrder.NEWEST),
+        // Filtr kategorii w /search NIEZWERYFIKOWANY -> kategorie tylko do drzewa w UI, filtr po stronie klienta.
+        serverCategoryFilter = false,
         requiresCredential = true,
         inAppDownload = true,
         hasPaidContent = false,
     )
 
-    override suspend fun isAvailable() = settings.current().thingiverseToken.isNotBlank()
+    override suspend fun isAvailable() = credentials.get(id) != null
+
+    /** Adres API (podmieniany w testach kontraktowych na MockWebServer). */
+    internal var base = BASE
 
     override fun webSearchUrl(text: String) =
         "https://www.thingiverse.com/search?type=things&q=" + URLEncoder.encode(text, "UTF-8")
 
     override suspend fun search(query: SearchQuery, page: PageRequest): SearchPage {
         val pageNo = page.cursor?.toIntOrNull() ?: 1
-        val sort = when (query.filters.sort) {
-            SortOrder.RELEVANCE -> "relevant"
-            SortOrder.POPULAR, SortOrder.TOP_RATED -> "popular"
-            SortOrder.NEWEST -> "newest"
-            SortOrder.MOST_DOWNLOADED -> "makes" // TODO: zweryfikować dostępne wartości sort
-            SortOrder.MOST_LIKED -> "popular"
-        }
+        val sort = resolveSort(query.filters.sort, query.text.isNotBlank()).nativeValue
         val term = query.text.ifBlank { "*" }
-        val url = "$BASE/search/${URLEncoder.encode(term, "UTF-8").replace("+", "%20")}".toHttpUrl().newBuilder()
+        val url = "$base/search/${URLEncoder.encode(term, "UTF-8").replace("+", "%20")}".toHttpUrl().newBuilder()
             .addQueryParameter("type", "things")
             .addQueryParameter("page", pageNo.toString())
             .addQueryParameter("per_page", page.size.toString())
@@ -84,9 +86,9 @@ class ThingiverseSource @Inject constructor(
     }
 
     override suspend fun details(modelId: String): ModelDetail {
-        val thing: ThingDto = get("$BASE/things/$modelId")
-        val files: List<FileDto> = runCatching { get<List<FileDto>>("$BASE/things/$modelId/files") }.getOrDefault(emptyList())
-        val images: List<ImageDto> = runCatching { get<List<ImageDto>>("$BASE/things/$modelId/images") }.getOrDefault(emptyList())
+        val thing: ThingDto = get("$base/things/$modelId")
+        val files: List<FileDto> = runCatching { get<List<FileDto>>("$base/things/$modelId/files") }.getOrDefault(emptyList())
+        val images: List<ImageDto> = runCatching { get<List<ImageDto>>("$base/things/$modelId/images") }.getOrDefault(emptyList())
         val modelFiles = files.map {
             ModelFile(it.id.toString(), it.name ?: "plik-${it.id}", it.size, FileKind.fromFileName(it.name.orEmpty()))
         }
@@ -104,18 +106,41 @@ class ThingiverseSource @Inject constructor(
         )
     }
 
+    /** Wartości sort wg klientów zewnętrznych: relevant, popular, newest, makes - NIEZWERYFIKOWANE oficjalnie. */
+    override fun resolveSort(sort: SortOrder, hasText: Boolean): SortResolution = when (sort) {
+        SortOrder.RELEVANCE -> SortResolution(sort, "relevant", "trafność", true)
+        SortOrder.POPULAR -> SortResolution(sort, "popular", "popularne", true)
+        SortOrder.NEWEST -> SortResolution(sort, "newest", "najnowsze", true)
+        SortOrder.TOP_RATED, SortOrder.MOST_LIKED -> SortResolution(sort, "popular", "popularne", false)
+        SortOrder.MOST_DOWNLOADED -> SortResolution(sort, "makes", "liczba wydruków (makes)", false)
+    }
+
+    /**
+     * GET /categories -> [{name, url, count}] (best effort, NIEZWERYFIKOWANE bez tokenu).
+     * ID kategorii = slug z URL (np. ".../categories/household" -> "household"). Lista płaska.
+     */
+    override suspend fun categories(): List<Category> {
+        if (!isAvailable()) return emptyList()
+        val list: List<CategoryDto> = get("$base/categories")
+        return list.mapNotNull { c ->
+            val name = c.name ?: return@mapNotNull null
+            val slug = c.url?.trimEnd('/')?.substringAfterLast('/') ?: name.lowercase().replace(' ', '-')
+            Category(id = slug, name = name, source = SourceId.THINGIVERSE)
+        }
+    }
+
     override suspend fun resolveDownload(modelId: String, file: ModelFile): DownloadTicket {
         val token = token()
         // /files/{id}/download przekierowuje do pliku; OkHttp podąża za redirectem.
         return DownloadTicket(
-            url = "$BASE/files/${file.id}/download",
+            url = "$base/files/${file.id}/download",
             fileName = file.name,
             headers = mapOf("Authorization" to "Bearer $token"),
         )
     }
 
     private suspend fun token(): String =
-        settings.current().thingiverseToken.ifBlank { throw SourceException.NotConfigured(id) }
+        (credentials.get(id) as? ApiCredential.Token)?.value ?: throw SourceException.NotConfigured(id)
 
     private suspend inline fun <reified T> get(url: String): T {
         val token = token()
@@ -180,6 +205,7 @@ class ThingiverseSource @Inject constructor(
     @Suppress("PropertyName")
     @Serializable private data class CreatorDto(val name: String? = null, val public_url: String? = null, val thumbnail: String? = null)
     @Serializable private data class TagDto(val name: String? = null)
+    @Serializable private data class CategoryDto(val name: String? = null, val url: String? = null, val count: Int? = null)
     @Serializable private data class FileDto(val id: Long, val name: String? = null, val size: Long? = null)
     @Serializable private data class ImageDto(val url: String? = null, val sizes: List<ImageSizeDto> = emptyList())
     @Serializable private data class ImageSizeDto(val type: String? = null, val size: String? = null, val url: String? = null)

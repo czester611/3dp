@@ -2,6 +2,7 @@ package pl.u1companion.data.source.demo
 
 import kotlinx.coroutines.delay
 import pl.u1companion.core.model.Author
+import pl.u1companion.core.model.Category
 import pl.u1companion.core.model.Dimensions
 import pl.u1companion.core.model.FileKind
 import pl.u1companion.core.model.License
@@ -57,7 +58,7 @@ class DemoSource @Inject constructor() : ModelSource {
             license = License(lic.name, lic.label, lic),
             isFree = i % 7 != 0,
             priceCents = if (i % 7 == 0) 499 else null,
-            category = listOf("Gadżety", "Dom", "Narzędzia", "Zabawki", "Testy")[i % 5],
+            category = DEMO_CATEGORIES[i % DEMO_CATEGORIES.size].name,
             hasPrintReadyFile = i % 3 == 0,
             hasU1Profile = i % 6 == 0,
         )
@@ -66,8 +67,10 @@ class DemoSource @Inject constructor() : ModelSource {
     override suspend fun search(query: SearchQuery, page: PageRequest): SearchPage {
         delay(300)
         val start = page.cursor?.toIntOrNull() ?: 0
+        val catName = page.categoryId?.let { id -> DEMO_CATEGORIES.firstOrNull { it.id == id }?.name }
         val all = (start until start + page.size).map(::item)
             .filter { query.text.isBlank() || it.title.contains(query.text, ignoreCase = true) || start > 0 }
+            .filter { catName == null || it.category == catName }
         val next = start + page.size
         return SearchPage(all, if (next >= 300) null else next.toString(), 300)
     }
@@ -93,5 +96,15 @@ class DemoSource @Inject constructor() : ModelSource {
     override suspend fun resolveDownload(modelId: String, file: ModelFile) =
         DownloadTicket("https://example.invalid/${file.name}", file.name)
 
+    override suspend fun categories(): List<Category> = DEMO_CATEGORIES
+
     override fun webSearchUrl(text: String) = "https://example.invalid/search?q=$text"
 }
+
+private val DEMO_CATEGORIES = listOf(
+    Category("g", "Gadgets", source = SourceId.DEMO),
+    Category("h", "Household", source = SourceId.DEMO),
+    Category("t", "Tools", source = SourceId.DEMO),
+    Category("y", "Toys & Games", source = SourceId.DEMO),
+    Category("x", "Test Models", source = SourceId.DEMO),
+)
