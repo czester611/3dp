@@ -70,6 +70,7 @@ import pl.u1companion.data.repo.LibraryRepository
 import pl.u1companion.data.repo.ModelRepository
 import pl.u1companion.download.DownloadRepository
 import pl.u1companion.data.source.SourceRegistry
+import pl.u1companion.data.source.WebFallbackPolicy
 import pl.u1companion.data.repo.GeometryRepository
 import pl.u1companion.geometry.FitStatus
 import pl.u1companion.geometry.GeometryAnalyzer
@@ -104,8 +105,17 @@ class DetailViewModel @Inject constructor(
     private val _openPrint = Channel<Long>(Channel.BUFFERED)
     val openPrint = _openPrint.receiveAsFlow()
 
+    /** Pobieranie w aplikacji tylko gdy API jest skonfigurowane i pozwala pobierać; inaczej strona modelu w WebView. */
+    val inAppDownload = MutableStateFlow(false)
+
+    /** Strona modelu w serwisie (do przycisku "Otwórz w przeglądarce", także gdy szczegóły z API się nie wczytały). */
+    fun webModelUrl(source: SourceId, id: String) = registry[source].webModelUrl(id)
+
     fun load(source: SourceId, id: String) = viewModelScope.launch {
         modelKey.value = "${source.name}:$id"
+        val src = registry[source]
+        val configured = runCatching { src.isAvailable() }.getOrDefault(false)
+        inAppDownload.value = WebFallbackPolicy.downloadRoute(src, configured) == WebFallbackPolicy.DownloadRoute.IN_APP
         state.value = DetailState.Loading
         state.value = runCatching { repo.details(source, id) }
             .onSuccess { library.recordHistory(HistoryType.VIEWED, it.summary) }
@@ -114,12 +124,11 @@ class DetailViewModel @Inject constructor(
 
     /** Pobiera najmniejszy plik STL/3MF, żeby policzyć wymiary (analiza po pobraniu w DownloadWorker). */
     fun checkDimensions(d: ModelDetail) = viewModelScope.launch {
-        if (!canDownloadInApp(d.summary.source)) return@launch
+        if (!inAppDownload.value) return@launch
         val f = d.files.filter { GeometryAnalyzer.supports(it.kind) }.minByOrNull { it.sizeBytes ?: Long.MAX_VALUE } ?: return@launch
         downloads.enqueue(d.summary, f)
     }
 
-    fun canDownloadInApp(source: SourceId) = registry[source].capabilities.inAppDownload
 
     fun toggleFavorite(d: ModelDetail) = viewModelScope.launch { library.toggleFavorite(d.summary, d.summary.key in favoriteKeys.value) }
 
@@ -147,6 +156,7 @@ fun DetailScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val favs by vm.favoriteKeys.collectAsStateWithLifecycle()
     val facts by vm.facts.collectAsStateWithLifecycle()
+    val inApp by vm.inAppDownload.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
 
     Scaffold(topBar = {
@@ -170,11 +180,15 @@ fun DetailScreen(
             is DetailState.Error -> Column(Modifier.padding(pad).padding(24.dp)) {
                 Text("Nie udało się wczytać modelu: ${s.message}")
                 Button(onClick = { vm.load(source, modelId) }) { Text("Ponów") }
+                // Np. brak klucza API: model nadal można obejrzeć i pobrać na stronie serwisu.
+                OutlinedButton(onClick = { onOpenWeb(source, vm.webModelUrl(source, modelId), "${source.name}:$modelId") }) {
+                    Text("Otwórz stronę modelu w przeglądarce")
+                }
             }
             is DetailState.Ready -> DetailContent(
-                s.detail, facts, Modifier.padding(pad), vm.canDownloadInApp(s.detail.summary.source),
+                s.detail, facts, Modifier.padding(pad), inApp,
                 onDownload = { f, print ->
-                    if (vm.canDownloadInApp(s.detail.summary.source)) vm.download(s.detail, f, print)
+                    if (inApp) vm.download(s.detail, f, print)
                     else onOpenWeb(s.detail.summary.source, s.detail.summary.webUrl, s.detail.summary.key)
                 },
                 onCheckDimensions = { vm.checkDimensions(s.detail) },
@@ -229,7 +243,7 @@ private fun DetailContent(
             if (d.files.isEmpty()) Text("Brak plików do pobrania przez API — użyj \"Otwórz w przeglądarce\".")
             if (!inAppDownload && d.files.isNotEmpty()) {
                 Text(
-                    "${d.summary.source.displayName}: pobieranie tylko przez stronę serwisu (wymaga logowania) — przyciski otworzą wbudowaną przeglądarkę, a pobrany plik trafi do Biblioteki.",
+                    "${d.summary.source.displayName}: pobieranie przez stronę serwisu (brak klucza API lub API nie pozwala pobierać) — przyciski otworzą wbudowaną przeglądarkę, a pobrany plik trafi do Biblioteki.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

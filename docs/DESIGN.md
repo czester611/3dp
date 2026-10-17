@@ -228,7 +228,13 @@ interface ModelSource {
 - `ClientSideFilter`: filtry nieobsługiwane przez API (licencja, darmowe, G-code, profil U1, kategoria po nazwie, „mieści się” z `ModelFacts`); wartość nieznana (`null`/UNKNOWN) nie odrzuca wyniku — oznaczenie „?”. Wyjątek: „Profil U1” wymaga potwierdzenia (nazwa pliku lub ustawienia z 3MF).
 - Nowy serwis = nowa klasa + wpis w `SourceRegistry` + testy kontraktowe (`SourceContractTest`, MockWebServer): Printables na nagranej odpowiedzi, MMF/Cults3D/Thingiverse na odpowiedziach zgodnych ze specyfikacją (nie testowane z prawdziwymi kluczami).
 - Źródła z `inAppDownload=false` (MMF, Cults3D): przyciski pobierania w szczegółach otwierają stronę modelu w WebView; pobrany plik trafia do Biblioteki z `modelKey`, więc analiza wymiarów/profilu łączy się z modelem.
-- Chipy źródeł: ikona klucza (API z kluczem, „· brak klucza” gdy nieskonfigurowane), ikona „nieoficjalne API” (Printables), chipy „↗” dla serwisów tylko przez przeglądarkę.
+- **Zasada „zawsze przez WWW”** (`WebFallbackPolicy`, v0.2.0): serwis bez API albo z API wymagającym klucza, którego nie ustawiono, jest zawsze dostępny w wbudowanej przeglądarce (z bieżącą frazą), a pobrany plik trafia do Biblioteki jak dotąd. Konkretnie:
+  - chip serwisu bez klucza („· ↗ przeglądarka”) nie jest martwy — otwiera menu „Otwórz w przeglądarce” / „Ustaw klucz API”;
+  - chipy „↗” obok źródeł i stopka listy obejmują wszystkie serwisy nieużywalne przez API (bez API lub bez klucza), stopka dodatkowo serwisy bez pobierania w aplikacji (MMF, Cults3D);
+  - źródła bez klucza są pomijane w liście wyników (zamiast błędu — adnotacja „≈ brak klucza API…”);
+  - w szczegółach pobieranie idzie w aplikacji tylko, gdy API jest skonfigurowane i pozwala pobierać; w przeciwnym razie przyciski otwierają stronę modelu (`ModelSource.webModelUrl`) w WebView; gdy szczegóły się nie wczytały (np. brak klucza), jest przycisk „Otwórz stronę modelu w przeglądarce”;
+  - skonfigurowane serwisy działają bez zmian.
+- Chipy źródeł: ikona klucza (API z kluczem), ikona „nieoficjalne API” (Printables), chipy „↗” dla serwisów przez przeglądarkę.
 
 ### 5.4 Warstwa drukarki
 

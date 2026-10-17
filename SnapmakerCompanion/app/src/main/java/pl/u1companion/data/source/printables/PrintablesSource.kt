@@ -69,6 +69,8 @@ class PrintablesSource @Inject constructor(
     /** Adres GraphQL (podmieniany w testach kontraktowych). */
     internal var endpoint = ENDPOINT
 
+    override fun webModelUrl(modelId: String) = "https://www.printables.com/model/$modelId"
+
     override fun webSearchUrl(text: String) =
         "https://www.printables.com/search/models?q=" + URLEncoder.encode(text, "UTF-8")
 

@@ -24,8 +24,8 @@ android {
         applicationId = "pl.u1companion"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // OTA - repozytorium z GitHub Releases (konfigurowalne w gradle.properties / -P).

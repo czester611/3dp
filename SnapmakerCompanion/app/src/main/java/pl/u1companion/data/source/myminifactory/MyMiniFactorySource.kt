@@ -73,6 +73,8 @@ class MyMiniFactorySource @Inject constructor(
 
     override suspend fun isAvailable() = credentials.get(id) != null
 
+    override fun webModelUrl(modelId: String) = "https://www.myminifactory.com/object/$modelId"
+
     override fun webSearchUrl(text: String) = "https://www.myminifactory.com/search/?query=" + URLEncoder.encode(text, "UTF-8")
 
     override fun resolveSort(sort: SortOrder, hasText: Boolean): SortResolution = when (sort) {

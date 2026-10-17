@@ -95,6 +95,7 @@ import pl.u1companion.core.model.SourceId
 import pl.u1companion.data.source.AccessMode
 import pl.u1companion.data.source.ClientSideFilter
 import pl.u1companion.data.source.ModelSource
+import pl.u1companion.data.source.WebFallbackPolicy
 import pl.u1companion.geometry.FitStatus
 import pl.u1companion.geometry.ModelFacts
 
@@ -104,6 +105,7 @@ fun BrowseScreen(
     onOpenModel: (ModelSummary) -> Unit,
     onOpenWebSource: (SourceId, String) -> Unit,
     initialQuery: pl.u1companion.core.model.SearchQuery? = null,
+    onOpenSettings: () -> Unit = {},
     vm: BrowseViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(initialQuery) { initialQuery?.let(vm::applySaved) }
@@ -156,9 +158,13 @@ fun BrowseScreen(
             ) {
                 items(vm.searchableSources, key = { it.id }) { src ->
                     val configured = availability[src.id] != false
+                    // Serwis z API bez klucza: chip nie jest martwy - oferuje przeglądarkę lub ustawienie klucza.
+                    val needsKey = src.capabilities.requiresCredential && !configured
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
                     FilterChip(
-                        selected = src.id in query.filters.sources,
-                        onClick = { vm.toggleSource(src.id) },
+                        selected = src.id in query.filters.sources && !needsKey,
+                        onClick = { if (needsKey) menu = true else vm.toggleSource(src.id) },
                         label = { Text(src.id.displayName + accessSuffix(src, configured)) },
                         leadingIcon = {
                             val icon = when {
@@ -170,9 +176,22 @@ fun BrowseScreen(
                             icon?.let { Icon(it, null, Modifier.size(16.dp)) }
                         },
                     )
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Otwórz ${src.id.displayName} w przeglądarce") },
+                            leadingIcon = { Icon(Icons.Default.OpenInBrowser, null) },
+                            onClick = { menu = false; onOpenWebSource(src.id, src.webSearchUrl(query.text)) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Ustaw klucz API (wyniki w aplikacji)") },
+                            leadingIcon = { Icon(Icons.Default.Key, null) },
+                            onClick = { menu = false; onOpenSettings() },
+                        )
+                    }
+                    }
                 }
                 // Serwisy bez API: otwierane w wbudowanej przeglądarce z bieżącą frazą
-                items(vm.webSources.filter { it.capabilities.access == AccessMode.ASSISTED_WEBVIEW || it.capabilities.access == AccessMode.LINK_OUT }, key = { "web-" + it.id }) { src ->
+                items(vm.webSources.filter { WebFallbackPolicy.offerWeb(it, availability[it.id] == true) }, key = { "web-" + it.id }) { src ->
                     AssistChip(
                         onClick = { onOpenWebSource(src.id, src.webSearchUrl(query.text)) },
                         label = { Text(src.id.displayName) },
@@ -217,7 +236,11 @@ fun BrowseScreen(
                                 else -> if (items.itemCount > 0) Text("To już wszystkie wyniki", style = MaterialTheme.typography.bodySmall)
                             }
                             Spacer(Modifier.height(12.dp))
-                            WebSourcesFooter(vm.webSources, query.text, onOpenWebSource)
+                            // Wszystkie serwisy, których nie da się teraz użyć przez API (+ te bez pobierania w aplikacji)
+                            WebSourcesFooter(
+                                vm.webSources.filter { WebFallbackPolicy.offerWeb(it, availability[it.id] == true) || !it.capabilities.inAppDownload },
+                                query.text, onOpenWebSource,
+                            )
                         }
                     }
                 }
@@ -540,7 +563,7 @@ private fun volumeLabel(long: Boolean = false): String {
 private fun accessSuffix(src: ModelSource, configured: Boolean, long: Boolean = false): String {
     val c = src.capabilities
     return when {
-        c.requiresCredential && !configured -> " · brak klucza"
+        c.requiresCredential && !configured -> " · ↗ przeglądarka"
         long && c.access == AccessMode.UNOFFICIAL_API -> " (nieoficjalne API)"
         long && c.requiresCredential -> " (oficjalne API, klucz)" + if (!c.inAppDownload) ", pobieranie przez stronę" else ""
         else -> ""

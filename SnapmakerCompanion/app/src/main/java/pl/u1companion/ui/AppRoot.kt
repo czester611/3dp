@@ -90,6 +90,7 @@ fun AppRoot() {
                     onOpenModel = { m -> nav.navigate(DetailRoute(m.source.name, m.id)) },
                     onOpenWebSource = { s, url -> nav.navigate(WebSourceRoute(s.name, url)) },
                     initialQuery = r.queryJson?.let { runCatching { routeJson.decodeFromString(SearchQuery.serializer(), it) }.getOrNull() },
+                    onOpenSettings = { nav.navigate(SettingsRoute) { launchSingleTop = true } },
                 )
             }
             composable<DetailRoute> { entry ->

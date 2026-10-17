@@ -67,6 +67,8 @@ class ThingiverseSource @Inject constructor(
     /** Adres API (podmieniany w testach kontraktowych na MockWebServer). */
     internal var base = BASE
 
+    override fun webModelUrl(modelId: String) = "https://www.thingiverse.com/thing:$modelId"
+
     override fun webSearchUrl(text: String) =
         "https://www.thingiverse.com/search?type=things&q=" + URLEncoder.encode(text, "UTF-8")
 

@@ -82,6 +82,9 @@ class Cults3dSource @Inject constructor(
 
     override suspend fun isAvailable() = credentials.get(id) != null
 
+    /** URL modelu Cults3D zawiera kategorię, której nie znamy z samego sluga -> wyszukiwanie po nazwie ze sluga. */
+    override fun webModelUrl(modelId: String) = webSearchUrl(modelId.replace('-', ' '))
+
     override fun webSearchUrl(text: String) = "https://cults3d.com/en/search?q=" + URLEncoder.encode(text, "UTF-8")
 
     override fun resolveSort(sort: SortOrder, hasText: Boolean): SortResolution =

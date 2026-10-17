@@ -17,6 +17,7 @@ import pl.u1companion.data.source.AggregatedSearchPagingSource
 import pl.u1companion.data.source.ModelSource
 import pl.u1companion.data.source.SourceRegistry
 import pl.u1companion.data.source.SourceWarning
+import pl.u1companion.data.source.WebFallbackPolicy
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -36,8 +37,10 @@ class ModelRepository @Inject constructor(
     /** Prosty cache szczegółów w pamięci (TTL w etapie 3: Room + ETag). */
     private val detailCache = ConcurrentHashMap<String, ModelDetail>()
 
-    private fun activeSources(query: SearchQuery): List<ModelSource> =
+    /** Wybrane źródła, które da się teraz użyć przez API (bez klucza -> tylko przeglądarka, nie lista wyników). */
+    private suspend fun activeSources(query: SearchQuery): List<ModelSource> =
         registry.searchable().filter { it.id in query.filters.sources }
+            .filter { s -> WebFallbackPolicy.usableViaApi(s, runCatching { s.isAvailable() }.getOrDefault(false)) || s.capabilities.access == pl.u1companion.data.source.AccessMode.DEMO }
 
     fun search(query: SearchQuery): Flow<PagingData<ModelSummary>> = flow {
         val plans = categories.plan(activeSources(query), query.filters)
@@ -59,7 +62,11 @@ class ModelRepository @Inject constructor(
             if (r.exact) null else SearchNote(s.id, "${s.id.displayName}: sortowanie „${query.filters.sort.label}” niedostępne — użyto: ${r.nativeLabel}")
         }
         val catNotes = categories.plan(sources, query.filters).flatMap { p -> p.notes.map { SearchNote(p.source.id, it) } }
-        return sortNotes + catNotes
+        val activeIds = sources.map { it.id }.toSet()
+        val keyNotes = registry.searchable().filter { it.id in query.filters.sources && it.id !in activeIds }.map {
+            SearchNote(it.id, "${it.id.displayName}: brak klucza API — wyniki niedostępne w liście; otwórz serwis w przeglądarce (↗) lub ustaw klucz w Ustawieniach")
+        }
+        return keyNotes + sortNotes + catNotes
     }
 
     suspend fun details(source: SourceId, modelId: String): ModelDetail {

@@ -59,7 +59,7 @@ class BrowseViewModel @Inject constructor(
 
     val searchableSources: List<ModelSource> = registry.searchable()
     /** Serwisy do otwarcia w wbudowanej przeglądarce (bez API lub jako alternatywa dla API z kluczem). */
-    val webSources: List<ModelSource> = registry.webFallbacks()
+    val webSources: List<ModelSource> = registry.allSources().filter { it.capabilities.access != pl.u1companion.data.source.AccessMode.DEMO }
 
     /** Czy źródło jest skonfigurowane (np. jest klucz API) - oznaczenie na chipach. */
     private val _availability = MutableStateFlow<Map<SourceId, Boolean>>(emptyMap())

@@ -116,4 +116,7 @@ interface ModelSource {
 
     /** URL do wyszukiwania w przeglądarce (fallback dla ASSISTED_WEBVIEW/LINK_OUT). */
     fun webSearchUrl(text: String): String
+
+    /** Strona modelu w serwisie (do przeglądarki, gdy API niedostępne). Domyślnie wyszukiwanie po ID. */
+    fun webModelUrl(modelId: String): String = webSearchUrl(modelId)
 }
