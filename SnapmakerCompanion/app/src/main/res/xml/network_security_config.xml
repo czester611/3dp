@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Moonraker na U1 i serwer slicingu w LAN działają po czystym HTTP.
+  Android domyślnie blokuje cleartext, więc dopuszczamy go globalnie
+  (nie da się wyliczyć adresów IP z góry). Ruch do internetu (serwisy
+  z modelami) i tak idzie po HTTPS - adaptery używają wyłącznie https://.
+  Ograniczenie do LAN egzekwuje kod (LanAddressPolicy).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
