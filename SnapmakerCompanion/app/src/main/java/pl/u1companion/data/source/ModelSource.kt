@@ -74,7 +74,11 @@ data class DownloadTicket(
 sealed class SourceException(message: String, cause: Throwable? = null) : Exception(message, cause) {
     class NotConfigured(val source: SourceId) : SourceException("Serwis ${source.displayName} wymaga konfiguracji (klucz API)")
     class Unauthorized(val source: SourceId) : SourceException("Nieprawidłowy lub wygasły klucz dla ${source.displayName}")
-    class RateLimited(val source: SourceId, val retryAfterSec: Long?) : SourceException("Limit zapytań ${source.displayName}")
+    class RateLimited(val source: SourceId, val retryAfterSec: Long?, hint: String? = null) : SourceException(
+        "Przekroczono limit zapytań ${source.displayName}" +
+            (retryAfterSec?.let { " — spróbuj ponownie za ${if (it >= 120) "${it / 60} min" else "$it s"}" } ?: " — spróbuj później") +
+            (hint?.let { ". $it" } ?: ""),
+    )
     class SchemaChanged(val source: SourceId, cause: Throwable?) :
         SourceException("Odpowiedź ${source.displayName} ma nieoczekiwany format (zmiana API?)", cause)
     class Unsupported(val source: SourceId, what: String) : SourceException("${source.displayName}: $what nieobsługiwane")

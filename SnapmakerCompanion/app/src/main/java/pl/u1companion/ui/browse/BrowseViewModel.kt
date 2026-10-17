@@ -65,8 +65,18 @@ class BrowseViewModel @Inject constructor(
     private val _availability = MutableStateFlow<Map<SourceId, Boolean>>(emptyMap())
     val availability: StateFlow<Map<SourceId, Boolean>> = _availability
 
+    /** Źródła już raz automatycznie włączone - użytkownik może je potem wyłączyć chipem i nie wracają same. */
+    private val autoEnabled = mutableSetOf<SourceId>()
+
     fun refreshAvailability() = viewModelScope.launch {
-        _availability.value = searchableSources.associate { it.id to runCatching { it.isAvailable() }.getOrDefault(false) }
+        val avail = searchableSources.associate { it.id to runCatching { it.isAvailable() }.getOrDefault(false) }
+        _availability.value = avail
+        // Źródła z kluczem API (Thingiverse, MyMiniFactory, Cults3D) działają normalnie: włączamy je, gdy klucz jest ustawiony.
+        val toEnable = searchableSources.filter { it.capabilities.requiresCredential && avail[it.id] == true && it.id !in autoEnabled }.map { it.id }
+        if (toEnable.isNotEmpty()) {
+            autoEnabled += toEnable
+            updateFilters { f -> f.copy(sources = f.sources + toEnable) }
+        }
     }
 
     private var lastText = ""

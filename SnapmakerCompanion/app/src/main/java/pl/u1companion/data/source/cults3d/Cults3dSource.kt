@@ -32,6 +32,7 @@ import pl.u1companion.data.source.SearchPage
 import pl.u1companion.data.source.SortResolution
 import pl.u1companion.data.source.SourceCapabilities
 import pl.u1companion.data.source.SourceException
+import pl.u1companion.data.source.TtlCache
 import java.io.IOException
 import java.net.URLEncoder
 import java.time.OffsetDateTime
@@ -72,6 +73,13 @@ class Cults3dSource @Inject constructor(
 
     internal var endpoint = ENDPOINT
 
+    /**
+     * Cache wyników na 1 h (limit Cults3D ~500 zapytań/dzień). Klucz = pełne zapytanie (fraza + filtry)
+     * + strona (kursor, rozmiar, kategoria). Błędy nie są cache'owane.
+     */
+    internal var searchCache = TtlCache<String, SearchPage>(CACHE_TTL_MS)
+    internal var detailCache = TtlCache<String, ModelDetail>(CACHE_TTL_MS)
+
     override suspend fun isAvailable() = credentials.get(id) != null
 
     override fun webSearchUrl(text: String) = "https://cults3d.com/en/search?q=" + URLEncoder.encode(text, "UTF-8")
@@ -88,7 +96,17 @@ class Cults3dSource @Inject constructor(
         }
 
     override suspend fun search(query: SearchQuery, page: PageRequest): SearchPage {
-        val offset = page.cursor?.toIntOrNull() ?: 0
+        // Mniejsze strony = mniej zbędnych pobrań przy przewijaniu (oszczędzanie limitu dziennego).
+        val size = page.size.coerceAtMost(PAGE_SIZE)
+        val key = cacheKey(query, page.copy(size = size))
+        return searchCache.getOrLoad(key) { searchRemote(query, page.cursor?.toIntOrNull() ?: 0, size) }
+    }
+
+    internal fun cacheKey(query: SearchQuery, page: PageRequest): String =
+        json.encodeToString(SearchQuery.serializer(), query) + "|${page.cursor}|${page.size}|${page.categoryId}"
+
+    private suspend fun searchRemote(query: SearchQuery, offset: Int, size: Int): SearchPage {
+        val page = PageRequest(offset.toString(), size)
         val batch = if (query.text.isNotBlank()) {
             graphql<SearchData>(SEARCH_QUERY, buildJsonObject {
                 put("query", query.text); put("limit", page.size); put("offset", offset)
@@ -106,7 +124,9 @@ class Cults3dSource @Inject constructor(
     }
 
     /** modelId = slug (z URL). */
-    override suspend fun details(modelId: String): ModelDetail {
+    override suspend fun details(modelId: String): ModelDetail = detailCache.getOrLoad(modelId) { detailsRemote(modelId) }
+
+    private suspend fun detailsRemote(modelId: String): ModelDetail {
         val c = graphql<DetailData>(DETAIL_QUERY, buildJsonObject { put("slug", modelId) }).creation
             ?: throw SourceException.SchemaChanged(id, null)
         val files = c.blueprints.mapIndexed { i, b ->
@@ -175,7 +195,14 @@ class Cults3dSource @Inject constructor(
                 http.newCall(req).execute().use { r ->
                     when {
                         r.code == 401 || r.code == 403 -> throw SourceException.Unauthorized(id)
-                        r.code == 429 -> throw SourceException.RateLimited(id, r.header("Retry-After")?.toLongOrNull())
+                        r.code == 429 -> throw SourceException.RateLimited(
+                            id,
+                            r.header("Retry-After")?.toLongOrNull() ?: r.header("x-ratelimit-reset")?.toLongOrNull()?.let { reset ->
+                                // nagłówek bywa liczbą sekund albo znacznikiem czasu Unix - obsługujemy oba
+                                if (reset > 1_000_000_000L) (reset - System.currentTimeMillis() / 1000).coerceAtLeast(1) else reset
+                            },
+                            "Cults3D pozwala na ok. 60 zapytań/30 s i ok. 500 dziennie; wyniki są cache'owane na 1 h",
+                        )
                         !r.isSuccessful -> throw SourceException.Network(id, IOException("HTTP ${r.code}"))
                     }
                     r.body?.string().orEmpty()
@@ -228,6 +255,8 @@ class Cults3dSource @Inject constructor(
 
     companion object {
         const val ENDPOINT = "https://cults3d.com/graphql"
+        const val PAGE_SIZE = 12
+        const val CACHE_TTL_MS = 60L * 60 * 1000
 
         /** Licencje Cults: kody "cults_cu" (komercyjna Cults), SPDX "CC-BY-4.0" itp., własne "LicenseRef-Cults-...". */
         fun cultsLicenseFamily(code: String?, spdx: String?, name: String?): LicenseFamily {
